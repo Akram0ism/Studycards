@@ -1323,22 +1323,24 @@ if (topicSel)
 // Горячие клавиши
 document.addEventListener('keydown', (e) => {
   if (state.page === 'workspace' && state.mode === 'study') {
+    const card = state.studyQueue[state.studyIndex];
+
     if (e.code === 'Space') {
       e.preventDefault();
+      // Для тестовых карточек – игнорируем пробел
+      if (card && card.type === 'single' && card.options?.length) {
+        return;
+      }
       if (!state.studyShowAnswer) showAns();
     }
+
     if (e.key === '1') rate(true);
     if (e.key === '2') rate(false);
-    if (
-      state.studyShowAnswer &&
-      (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'b')
-    ) {
-      e.preventDefault();
-      backToQuestion();
-    }
+    // ...
   }
   if (e.ctrlKey && e.key === 'Enter') saveCard();
 });
+
 
 // Первый показ
 setPage(state.page || 'home');
