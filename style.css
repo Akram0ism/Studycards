@@ -14,7 +14,7 @@
 }
 body {
   margin: 0;
-  font-family: 'Inter', system-ui, sans-serif;
+  font-family: Inter, system-ui, sans-serif;
   background: var(--bg);
   color: var(--text);
   display: flex;
@@ -22,6 +22,7 @@ body {
   overflow: hidden;
 }
 
+/* Sidebar */
 .sidebar {
   width: 280px;
   backdrop-filter: blur(12px);
@@ -42,7 +43,36 @@ h3 {
   font-size: 14px;
   color: var(--text-muted);
 }
+.panel {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
 
+/* Nav */
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.nav-item {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  padding: 8px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: left;
+}
+.nav-item:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+.nav-item.active {
+  background: rgba(168, 85, 247, 0.12);
+  border-color: var(--accent);
+}
+
+/* Inputs/Buttons */
 .input,
 .textarea,
 select {
@@ -61,7 +91,6 @@ select:focus {
   border-color: var(--accent);
   box-shadow: 0 0 10px var(--accent-glow);
 }
-
 .btn {
   border: none;
   border-radius: 999px;
@@ -82,48 +111,14 @@ select:focus {
   border: 1px solid var(--border);
   box-shadow: none;
 }
-.btn.small {
-  padding: 4px 10px;
-  font-size: 12px;
-}
 
-.deck-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  overflow-y: auto;
-  max-height: 45vh;
-}
-.deck-item {
-  padding: 10px 12px;
-  border-radius: 10px;
-  margin-bottom: 6px;
-  background: rgba(255, 255, 255, 0.02);
-  cursor: pointer;
-}
-.deck-item:hover {
-  border: 1px solid var(--accent);
-  box-shadow: 0 0 10px var(--accent-glow);
-}
-.deck-item.active {
-  background: rgba(168, 85, 247, 0.12);
-  border: 1px solid var(--accent);
-}
-.deck-item-title {
-  font-weight: 600;
-  font-size: 14px;
-}
-.deck-item-desc {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
+/* Main */
 .main {
   flex: 1;
   display: flex;
   flex-direction: column;
   padding: 20px 30px;
-  overflow: hidden;
+  overflow: auto;
 }
 .main-header {
   display: flex;
@@ -135,12 +130,6 @@ select:focus {
   font-size: 20px;
   font-weight: 600;
 }
-.deck-exam-info {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-top: 4px;
-}
-
 .mode-switch {
   display: flex;
   border-radius: 999px;
@@ -159,7 +148,132 @@ select:focus {
   background: var(--accent);
   color: #fff;
 }
+.muted {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.small {
+  font-size: 12px;
+}
 
+/* Home */
+.hero {
+  backdrop-filter: blur(20px);
+  background: var(--glass);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 0 20px rgba(168, 85, 247, 0.08);
+}
+.hero h1 {
+  margin: 0 0 8px 0;
+}
+.hero-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.weekbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 10px 0 12px;
+}
+.week-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 10px;
+}
+.day-cell {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 14px;
+  padding: 10px;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+}
+.day-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.day-name {
+  font-weight: 700;
+}
+.day-date {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.today {
+  outline: 2px solid var(--accent);
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+.day-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 12px;
+  cursor: pointer;
+}
+.pill:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+
+/* Library */
+.lib-toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+.deck-card {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 14px;
+  padding: 14px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.deck-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+.deck-card .title {
+  font-weight: 700;
+}
+.deck-card .desc {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Cards & Study */
 .card-form,
 .study-card {
   backdrop-filter: blur(20px);
@@ -209,13 +323,8 @@ th {
   color: var(--text-muted);
   font-size: 12px;
 }
-
 .search-bar {
   margin-bottom: 10px;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
 }
 .empty-state {
   text-align: center;
@@ -239,9 +348,6 @@ th {
   margin-bottom: 4px;
   font-size: 14px;
 }
-.option-item input {
-  margin: 0;
-}
 .opt-correct {
   border-color: #16a34a;
   background: rgba(22, 163, 74, 0.12);
@@ -264,19 +370,6 @@ th {
 .option-row .option-text {
   flex: 1;
 }
-.options-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 4px;
-}
-.muted {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-.tiny {
-  font-size: 11px;
-}
 
 .toast-container {
   position: fixed;
@@ -285,6 +378,7 @@ th {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  z-index: 9999;
 }
 .toast {
   background: rgba(20, 10, 30, 0.9);
@@ -300,18 +394,6 @@ th {
 .toast.show {
   opacity: 1;
   transform: translateY(0);
-}
-
-@media (max-width: 800px) {
-  body {
-    flex-direction: column;
-    height: auto;
-  }
-  .sidebar {
-    width: 100%;
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-  }
 }
 
 .field {
@@ -364,12 +446,6 @@ th {
   cursor: pointer;
 }
 
-.form-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 10px;
-}
-
 .study-img {
   margin-top: 10px;
   max-width: 100%;
@@ -381,17 +457,228 @@ th {
   margin-right: auto;
 }
 
-.schedule-cell {
-  padding: 6px 10px;
+.row {
   display: flex;
+  gap: 8px;
   align-items: center;
-  gap: 6px;
 }
-.enforce {
+.row-between {
   display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.row-wrap {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* ===== Рабочее место: три колонки =====
+   1) Редактор | 2) Расписание | 3) Темы */
+.ws-top-grid {
+  display: grid;
+  grid-template-columns: 1fr 340px 260px;
+  gap: 12px;
+  align-items: start;
+}
+
+/* Расписание (sticky) */
+.schedule-card {
+  position: sticky;
+  top: 72px;
+  max-height: calc(100vh - 96px);
+  overflow: auto;
+}
+
+/* Темы (sticky) */
+.topic-panel {
+  position: sticky;
+  top: 72px;
+  max-height: calc(100vh - 96px);
+  overflow: auto;
+}
+
+/* Строки расписания */
+.ws-sched-item {
+  display: flex;
+  justify-content: space-between;
   align-items: center;
   gap: 8px;
-  margin-top: 8px;
-  font-size: 13px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+.ws-sched-item .left {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.ws-day {
+  font-weight: 600;
+}
+.ws-topic {
   color: var(--text-muted);
+}
+
+/* Плашки тем */
+.topic-pill {
+  background: rgba(168, 85, 247, 0.15);
+  border: 1px solid rgba(168, 85, 247, 0.4);
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.topic-pill:hover {
+  background: rgba(168, 85, 247, 0.3);
+}
+.topic-pill.active {
+  background: rgba(168, 85, 247, 0.6);
+  color: #fff;
+  font-weight: 600;
+}
+
+/* ===== Адаптив ===== */
+@media (max-width: 1100px) {
+  .ws-top-grid {
+    grid-template-columns: 1fr 320px;
+  }
+  .topic-panel {
+    display: none;
+  }
+}
+@media (max-width: 920px) {
+  .ws-top-grid {
+    grid-template-columns: 1fr;
+  }
+  .schedule-card,
+  .topic-panel {
+    position: static;
+    max-height: none;
+  }
+}
+@media (max-width: 800px) {
+  .sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .week-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+/* Лёгкий акцент вокруг заголовка колоды */
+.deck-title.accented {
+  border-left: 4px solid currentColor;
+  padding-left: 8px;
+}
+/* ==== ТЁМНЫЕ ВЫПАДАЮЩИЕ СПИСКИ И ХОВЕРЫ ==== */
+
+/* системные компоненты ориентируем на тёмную схему */
+:root,
+body {
+  color-scheme: dark;
+}
+
+/* Универсальный фокус-ринговый стиль (видно на тёмном) */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Кнопки/вкладки при фокусе/hover */
+.btn:focus-visible,
+.nav-item:focus-visible,
+.mode-btn:focus-visible {
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+/* ==== SELECT (кастомная стрелка + тёмный фон) ==== */
+select.input {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding-right: 34px; /* под стрелку */
+  background: linear-gradient(transparent, transparent) padding-box,
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='%23f3f4f6'><path d='M7 10l5 5 5-5z'/></svg>")
+      no-repeat right 10px center / 14px 14px,
+    rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+select.input:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+select.input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Цвет меню и пунктов — поддерживается не везде, но помогает */
+select.input option,
+select.input optgroup {
+  background: #120b21;
+  color: var(--text);
+}
+
+/* Скроллбар в попапах (там, где применится) */
+select.input::-webkit-scrollbar {
+  width: 10px;
+}
+select.input::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+}
+
+/* ==== ПЛАШКИ ТЕМ (контраст на тёмном) ==== */
+.topic-pill {
+  color: var(--text);
+  border: 1px solid rgba(168, 85, 247, 0.45);
+  background: rgba(168, 85, 247, 0.15);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.25); /* лёгкое усиление читаемости */
+}
+.topic-pill:hover {
+  background: rgba(168, 85, 247, 0.25);
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+.topic-pill.active {
+  background: rgba(168, 85, 247, 0.6);
+  border-color: rgba(168, 85, 247, 0.85);
+  color: #fff;
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 0 10px var(--accent-glow);
+}
+
+/* Дополнительно улучшим видимость активных вкладок/кнопок */
+.nav-item.active {
+  background: rgba(168, 85, 247, 0.18);
+  border-color: var(--accent);
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+
+/* Тёмные ховеры для .pill в календаре (если без пер-колоды) */
+.pill {
+  color: var(--text);
+}
+.pill:hover {
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+
+/* ==== Состояния списка тем при клавиатурной навигации ==== */
+.topic-pill:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* На всякий случай — инверсии системного белого фона в некоторых WebKit */
+@supports (-webkit-backdrop-filter: blur(0)) {
+  select.input:focus {
+    background-color: rgba(255, 255, 255, 0.05);
+  }
 }
