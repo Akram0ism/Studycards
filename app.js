@@ -1,30 +1,23 @@
+// ---- State ----
 const STORAGE_KEY = 'flashcards_pro_violet';
-
-const DEFAULT_SCHEDULE = {
-  days: {
-    mon: true,
-    tue: true,
-    wed: true,
-    thu: true,
-    fri: true,
-    sat: false,
-    sun: false,
-  },
-  enforce: false,
-};
-
 let state = {
   decks: [],
   selectedDeckId: null,
-  mode: 'manage',
+  page: 'home', // 'home' | 'library' | 'workspace'
+  mode: 'manage', // 'manage' | 'study'
   studyQueue: [],
   studyIndex: 0,
   studyShowAnswer: false,
   stats: { streak: 0, studiedToday: 0, lastDate: null },
-  schedule: DEFAULT_SCHEDULE,
+
+  // Новое: расписание недели (0=Пн ... 6=Вс)
+  schedule: { weekly: [[], [], [], [], [], [], []] },
+
+  // Текущая неделя для показа на главной (offset от "сегодня")
+  uiWeekOffset: 0,
 };
 
-// --- storage
+// ---- Utils ----
 const uid = (p = 'id') => p + '_' + Math.random().toString(36).slice(2, 9);
 const save = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 const load = () => {
@@ -32,24 +25,19 @@ const load = () => {
   if (!raw) return;
   try {
     Object.assign(state, JSON.parse(raw));
-    state.schedule = state.schedule || DEFAULT_SCHEDULE;
-    state.schedule.days = Object.assign(
-      {
-        mon: false,
-        tue: false,
-        wed: false,
-        thu: false,
-        fri: false,
-        sat: false,
-        sun: false,
-      },
-      state.schedule.days || {}
-    );
-    if (typeof state.schedule.enforce !== 'boolean')
-      state.schedule.enforce = false;
-  } catch (e) {}
+  } catch {}
 };
 
+// гарантируем структуру расписания
+function ensureSchedule() {
+  if (
+    !state.schedule ||
+    !Array.isArray(state.schedule.weekly) ||
+    state.schedule.weekly.length !== 7
+  ) {
+    state.schedule = { weekly: [[], [], [], [], [], [], []] };
+  }
+}
 function showToast(msg) {
   const box = document.createElement('div');
   box.className = 'toast';
@@ -61,36 +49,6 @@ function showToast(msg) {
     setTimeout(() => box.remove(), 300);
   }, 2500);
 }
-
-// --- scheduling helpers
-function jsDayToKey(d) {
-  return ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][d];
-}
-function isAllowedToday() {
-  const key = jsDayToKey(new Date().getDay());
-  return !!state.schedule?.days?.[key];
-}
-function nextAllowedDate() {
-  const today = new Date();
-  for (let i = 1; i <= 7; i++) {
-    const dt = new Date(
-      today.getFullYear(),
-      today.getMonth(),
-      today.getDate() + i
-    );
-    const key = jsDayToKey(dt.getDay());
-    if (state.schedule?.days?.[key]) return dt;
-  }
-  return null;
-}
-function fmtDate(d) {
-  const w = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'][d.getDay()];
-  const dd = String(d.getDate()).padStart(2, '0');
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  return `${w}, ${dd}.${mm}`;
-}
-
-// --- SM2-ish interval
 function nextInterval(card, knew) {
   if (knew) {
     card.reps = (card.reps || 0) + 1;
@@ -104,24 +62,267 @@ function nextInterval(card, knew) {
   }
   card.due = Date.now() + card.interval * 24 * 60 * 60 * 1000;
 }
+const currentDeck = () =>
+  state.decks.find((d) => d.id === state.selectedDeckId);
 
-function currentDeck() {
-  return state.decks.find((d) => d.id === state.selectedDeckId);
+// ---- Page routing ----
+function setPage(page) {
+  state.page = page;
+  document
+    .querySelectorAll('.nav-item')
+    .forEach((b) => b.classList.toggle('active', b.dataset.page === page));
+  document.getElementById('libraryPanel').style.display =
+    page === 'library' ? 'block' : 'none';
+  document.getElementById('homeSection').style.display =
+    page === 'home' ? 'block' : 'none';
+  document.getElementById('librarySection').style.display =
+    page === 'library' ? 'block' : 'none';
+  document.getElementById('workspaceSection').style.display =
+    page === 'workspace' ? 'block' : 'none';
+
+  const pageTitle = document.getElementById('pageTitle');
+  const switcher = document.getElementById('workspaceSwitch');
+  if (page === 'workspace') {
+    pageTitle.textContent = currentDeck()
+      ? currentDeck().title
+      : 'Рабочее место';
+    switcher.style.display = 'flex';
+  } else {
+    pageTitle.textContent = page === 'library' ? 'Библиотека' : 'Главная';
+    switcher.style.display = 'none';
+  }
+  if (page === 'workspace') {
+    updateWorkspaceVisibility();
+  }
+
+  if (page === 'home') {
+    renderHomeCalendar();
+  }
+  if (page === 'library') renderLibrary();
+  if (page === 'workspace') {
+    renderHeader();
+    syncDeckColorPicker();
+    renderCards();
+    renderWorkspaceScheduleBox();
+    renderTopicPanel();
+    if (state.mode === 'study') renderStudy();
+  }
+  updateWorkspaceVisibility();
+  save();
+}
+function syncDeckColorPicker() {
+  const box = document.getElementById('deckColorBox');
+  const input = document.getElementById('deckColorPicker');
+  const deck = currentDeck();
+  if (!box || !input) return;
+  if (!deck) {
+    box.style.display = 'none';
+    return;
+  }
+  box.style.display = 'flex';
+  input.value = getDeckColor(deck);
 }
 
+// ---- HOME: Week calendar ----
+const wdNames = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+function startOfISOWeek(d) {
+  // Пн-начало
+  const dt = new Date(d);
+  const day = (dt.getDay() + 6) % 7; // 0..6 (Пн=0)
+  dt.setDate(dt.getDate() - day);
+  dt.setHours(0, 0, 0, 0);
+  return dt;
+}
+function addDays(d, n) {
+  const x = new Date(d);
+  x.setDate(x.getDate() + n);
+  return x;
+}
+function fmtDate(d) {
+  return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+}
+function hexToRgb(hex) {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  if (!m) return { r: 168, g: 85, b: 247 }; // fallback accent
+  return {
+    r: parseInt(m[1], 16),
+    g: parseInt(m[2], 16),
+    b: parseInt(m[3], 16),
+  };
+}
+function withAlpha(hex, a) {
+  const { r, g, b } = hexToRgb(hex || '#a855f7');
+  return `rgba(${r}, ${g}, ${b}, ${a})`;
+}
+function getDeckColor(deck) {
+  return deck?.color || '#a855f7';
+}
+
+function renderHomeCalendar() {
+  ensureSchedule();
+  const weekGrid = document.getElementById('weekGrid');
+  const weekLabel = document.getElementById('weekLabel');
+  weekGrid.innerHTML = '';
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const base = startOfISOWeek(new Date()); // начало текущей недели (Пн)
+  const start = addDays(base, state.uiWeekOffset * 7);
+  const end = addDays(start, 6);
+  weekLabel.textContent = `${fmtDate(start)} — ${fmtDate(end)}`;
+
+  for (let i = 0; i < 7; i++) {
+    const dayDate = addDays(start, i);
+    const isoIndex = i; // 0=Пн..6=Вс
+    const isToday = dayDate.getTime() === today.getTime();
+
+    const cell = document.createElement('div');
+    cell.className = 'day-cell' + (isToday ? ' today' : '');
+    cell.innerHTML = `
+      <div class="day-head">
+        <div class="day-name">${wdNames[i]}</div>
+        <div class="day-date">${fmtDate(dayDate)}</div>
+      </div>
+      <div class="day-list" id="dayList_${i}"></div>
+    `;
+    weekGrid.appendChild(cell);
+
+    // элементы расписания
+    const list = document.getElementById(`dayList_${i}`);
+    const items = state.schedule.weekly[isoIndex] || [];
+
+    if (!items.length) {
+      const empty = document.createElement('div');
+      empty.className = 'muted small';
+      empty.textContent = '—';
+      list.appendChild(empty);
+    } else {
+      items.forEach((it) => {
+        const deck = state.decks.find((d) => d.id === it.deckId);
+        const pill = document.createElement('div');
+        pill.className = 'pill';
+        pill.title = deck
+          ? deck.title + (it.topic ? ` • ${it.topic}` : '')
+          : it.topic || '';
+        pill.innerHTML = `📘 ${deck ? deck.title : 'Колода?'} ${
+          it.topic ? `<span style="opacity:.8">• ${it.topic}</span>` : ''
+        }`;
+
+        // подкраска по цвету колоды
+        if (deck) {
+          const col = getDeckColor(deck);
+          pill.style.borderColor = withAlpha(col, 0.55);
+          pill.style.background = withAlpha(col, 0.15);
+          pill.onmouseenter = () =>
+            (pill.style.boxShadow = `0 0 8px ${withAlpha(col, 0.35)}`);
+          pill.onmouseleave = () => (pill.style.boxShadow = ``);
+        }
+
+        pill.onclick = () => {
+          if (deck) {
+            state.selectedDeckId = deck.id;
+            setPage('workspace');
+            const topicSel = document.getElementById('topicFilter');
+            if (topicSel) topicSel.value = it.topic || '';
+            renderTopicPanel();
+            state.mode = 'study';
+            startStudy();
+            updateWorkspaceVisibility();
+            showToast(
+              `Учим «${deck.title}» ${it.topic ? '• ' + it.topic : ''}`
+            );
+          } else {
+            showToast('Колода не найдена (удалена?)');
+          }
+        };
+        list.appendChild(pill);
+      });
+    }
+  }
+}
+
+function addScheduleItem(weekdayIndex, deckId, topic) {
+  // helper для тебя (можно вызывать из консоли): 0=Пн..6=Вс
+  ensureSchedule();
+  const arr =
+    state.schedule.weekly[weekdayIndex] ||
+    (state.schedule.weekly[weekdayIndex] = []);
+  arr.push({ deckId, topic: (topic || '').trim() || undefined });
+  save();
+  if (state.page === 'home') renderHomeCalendar();
+}
+
+// ---- LIBRARY ----
 function formatExamBadge(deck) {
   if (!deck.examDate) return '';
-  const exam = new Date(deck.examDate);
-  const today = new Date();
+  const exam = new Date(deck.examDate),
+    today = new Date();
   exam.setHours(0, 0, 0, 0);
   today.setHours(0, 0, 0, 0);
-  const diffDays = Math.round((exam - today) / (1000 * 60 * 60 * 24));
-  if (diffDays < 0) return ' · экзамен прошёл';
-  if (diffDays === 0) return ' · экзамен сегодня';
-  if (diffDays === 1) return ' · экзамен завтра';
-  return ` · экзамен через ${diffDays} дн.`;
+  const diff = Math.round((exam - today) / (1000 * 60 * 60 * 24));
+  if (diff < 0) return 'экзамен прошёл';
+  if (diff === 0) return 'экзамен сегодня';
+  if (diff === 1) return 'экзамен завтра';
+  return `экзамен через ${diff} дн.`;
+}
+function renderLibrary() {
+  const grid = document.getElementById('libraryGrid');
+  const empty = document.getElementById('libraryEmpty');
+  const q = (document.getElementById('libSearch')?.value || '').toLowerCase();
+  grid.innerHTML = '';
+  let decks = state.decks;
+  if (q)
+    decks = decks.filter(
+      (d) =>
+        (d.title || '').toLowerCase().includes(q) ||
+        (d.description || '').toLowerCase().includes(q)
+    );
+  if (!decks.length) {
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+  decks.forEach((d) => {
+    const card = document.createElement('div');
+    card.className = 'deck-card';
+    const deckColor = getDeckColor(d);
+    card.style.borderColor = withAlpha(deckColor, 0.35);
+    card.style.boxShadow = `0 0 12px ${withAlpha(deckColor, 0.12)}`;
+    card.innerHTML = `
+  <div class="title" style="color:${deckColor}">${d.title}</div>
+  <div class="desc">${d.description || 'Без описания'}</div>
+  <div class="row" style="gap:6px;margin-top:4px">
+    <span class="badge">${d.cards?.length || 0} карточек</span>
+    ${d.examDate ? `<span class="badge">${formatExamBadge(d)}</span>` : ``}
+    <span class="badge" style="border-color:${withAlpha(
+      deckColor,
+      0.5
+    )};background:${withAlpha(deckColor, 0.12)}">цвет</span>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <button class="btn" data-open="workspace">Открыть</button>
+    <button class="btn btn-secondary" data-del="1">Удалить</button>
+  </div>
+`;
+    card.querySelector('[data-open]').onclick = () => {
+      state.selectedDeckId = d.id;
+      state.mode = 'manage';
+      state.studyShowAnswer = false;
+      setPage('workspace');
+    };
+    card.querySelector('[data-del]').onclick = () => {
+      if (confirm(`Удалить колоду «${d.title}»?`)) {
+        state.decks = state.decks.filter((x) => x.id !== d.id);
+        if (state.selectedDeckId === d.id) state.selectedDeckId = null;
+        save();
+        renderLibrary();
+      }
+    };
+    grid.appendChild(card);
+  });
 }
 
+// ---- WORKSPACE (прежний) ----
 function highlight(text, q) {
   if (!q) return text;
   const r = new RegExp(
@@ -130,57 +331,18 @@ function highlight(text, q) {
   );
   return text.replace(
     r,
-    '<mark style="background:rgba(168,85,247,0.4);color:#fff;border-radius:3px;">$1</mark>'
+    '<mark style="background:rgba(168,85,247,.4);color:#fff;border-radius:3px;">$1</mark>'
   );
 }
-
-// --- options editor
 function refreshOptionsEditorVisibility() {
   const select = document.getElementById('cardTypeSelect');
-  const editor = document.getElementById('optionsEditor');
-  editor.style.display = select.value === 'single' ? 'block' : 'none';
+  document.getElementById('optionsEditor').style.display =
+    select.value === 'single' ? 'block' : 'none';
 }
 function clearOptionsEditor() {
   const list = document.getElementById('optionsList');
   if (list) list.innerHTML = '';
 }
-function addOptionRow(option = null) {
-  const list = document.getElementById('optionsList');
-  if (!list) return;
-  const row = document.createElement('div');
-  row.className = 'option-row';
-  row.dataset.id = option?.id || uid('opt');
-
-  const textInput = document.createElement('input');
-  textInput.type = 'text';
-  textInput.className = 'input option-text';
-  textInput.placeholder = 'Текст варианта';
-  textInput.value = option?.text || '';
-
-  const label = document.createElement('label');
-  label.style.fontSize = '11px';
-  label.style.color = 'var(--text-muted)';
-  const radio = document.createElement('input');
-  radio.type = 'radio';
-  radio.name = 'correctOptionEditor';
-  radio.checked = !!option?.correct;
-  label.appendChild(radio);
-  label.appendChild(document.createTextNode(' Правильный'));
-
-  const removeBtn = document.createElement('button');
-  removeBtn.type = 'button';
-  removeBtn.className = 'btn btn-secondary';
-  removeBtn.style.padding = '4px 8px';
-  removeBtn.textContent = '×';
-  removeBtn.onclick = () => row.remove();
-
-  row.appendChild(textInput);
-  row.appendChild(label);
-  row.appendChild(removeBtn);
-  list.appendChild(row);
-}
-
-// --- images
 function readFileAsDataURL(file) {
   return new Promise((res, rej) => {
     const r = new FileReader();
@@ -221,8 +383,85 @@ function clearFormImagesInline() {
   document.getElementById('frontImgFile').value = '';
   document.getElementById('backImgFile').value = '';
 }
+function addOptionRow(option = null) {
+  const list = document.getElementById('optionsList');
+  if (!list) return;
+  const row = document.createElement('div');
+  row.className = 'option-row';
+  row.dataset.id = option?.id || uid('opt');
+  const textInput = document.createElement('input');
+  textInput.type = 'text';
+  textInput.className = 'input option-text';
+  textInput.placeholder = 'Текст варианта';
+  textInput.value = option?.text || '';
+  const label = document.createElement('label');
+  label.style.fontSize = '11px';
+  label.style.color = 'var(--text-muted)';
+  const radio = document.createElement('input');
+  radio.type = 'radio';
+  radio.name = 'correctOptionEditor';
+  radio.checked = !!option?.correct;
+  label.appendChild(radio);
+  label.appendChild(document.createTextNode(' Правильный'));
+  const removeBtn = document.createElement('button');
+  removeBtn.type = 'button';
+  removeBtn.className = 'btn btn-secondary';
+  removeBtn.style.padding = '4px 8px';
+  removeBtn.textContent = '×';
+  removeBtn.onclick = () => row.remove();
+  row.append(textInput, label, removeBtn);
+  list.appendChild(row);
+}
 
-// --- topics
+function updateWorkspaceVisibility() {
+  const editor = document.getElementById('cardEditor');
+  const table = document.getElementById('cardTable');
+  const study = document.getElementById('studySection');
+  const sched = document.getElementById('wsScheduleBox');
+  const topics = document.getElementById('topicPanel');
+
+  if (!editor || !table || !study) return;
+
+  if (state.mode === 'study') {
+    editor.style.display = 'none';
+    table.style.display = 'none';
+    study.style.display = 'block';
+    if (sched) sched.style.display = 'none';
+    if (topics) topics.style.display = 'none';
+  } else {
+    editor.style.display = 'block';
+    table.style.display = 'block';
+    study.style.display = 'none';
+    if (sched) sched.style.display = 'block';
+    if (topics) topics.style.display = ''; // даст работать media-queries
+  }
+}
+
+function renderHeader() {
+  const deck = currentDeck();
+  const titleEl = document.getElementById('pageTitle');
+  const examInfoEl = document.getElementById('deckExamInfo');
+  titleEl.textContent = deck ? deck.title : 'Рабочее место';
+  examInfoEl.textContent = deck?.examDate
+    ? 'Экзамен: ' + deck.examDate + ' · ' + formatExamBadge(deck)
+    : '';
+
+  // акцент цветом
+  if (deck) {
+    titleEl.style.color = getDeckColor(deck);
+    titleEl.classList.add('accented');
+  } else {
+    titleEl.style.color = '';
+    titleEl.classList.remove('accented');
+  }
+
+  document
+    .querySelectorAll('.mode-btn')
+    .forEach((btn) =>
+      btn.classList.toggle('active', btn.dataset.mode === state.mode)
+    );
+}
+
 function getDeckTopics(deck) {
   const set = new Set();
   (deck.cards || []).forEach((c) => {
@@ -236,19 +475,17 @@ function renderTopicFilter() {
   const sel = document.getElementById('topicFilter');
   const dl = document.getElementById('topicsDatalist');
   if (!sel || !dl) return;
-
   const cur = sel.value;
   sel.innerHTML = `<option value="">Все темы</option>`;
   if (deck) {
     getDeckTopics(deck).forEach((t) => {
-      const opt = document.createElement('option');
-      opt.value = t;
-      opt.textContent = t;
-      sel.appendChild(opt);
+      const o = document.createElement('option');
+      o.value = t;
+      o.textContent = t;
+      sel.appendChild(o);
     });
   }
   if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
-
   dl.innerHTML = '';
   if (deck) {
     getDeckTopics(deck).forEach((t) => {
@@ -258,96 +495,27 @@ function renderTopicFilter() {
     });
   }
 }
-
-// --- render
-function renderDeckList() {
-  const list = document.querySelector('.deck-list');
-  list.innerHTML = '';
-  if (!state.decks.length) {
-    list.innerHTML = "<div class='deck-item'>Нет колод</div>";
-    return;
-  }
-  state.decks.forEach((d) => {
-    const li = document.createElement('li');
-    li.className =
-      'deck-item' + (d.id === state.selectedDeckId ? ' active' : '');
-    li.innerHTML = `
-      <div class="deck-item-title">${d.title}</div>
-      <div class="deck-item-desc">${d.description || 'Без описания'} · ${
-      d.cards.length
-    } шт.${formatExamBadge(d)}</div>`;
-    li.onclick = () => {
-      state.selectedDeckId = d.id;
-      state.mode = 'manage';
-      save();
-      renderAll();
-    };
-    list.appendChild(li);
-  });
-}
-
-function renderHeader() {
-  const deck = currentDeck();
-  const titleEl = document.querySelector('.deck-title');
-  const examInfoEl = document.getElementById('deckExamInfo');
-
-  if (deck) {
-    titleEl.textContent = deck.title;
-    if (deck.examDate) {
-      const badge = formatExamBadge(deck);
-      examInfoEl.textContent =
-        'Экзамен: ' + deck.examDate + badge.replace(' ·', ' ·');
-    } else examInfoEl.textContent = '';
-  } else {
-    titleEl.textContent = 'Учебные карточки';
-    if (examInfoEl) examInfoEl.textContent = '';
-  }
-
-  document.querySelectorAll('.mode-btn').forEach((btn) => {
-    btn.classList.remove('active');
-    if (
-      (btn.textContent.includes('Ред') && state.mode === 'manage') ||
-      (btn.textContent.includes('Уч') && state.mode === 'study')
-    )
-      btn.classList.add('active');
-  });
-
-  // расписание hint
-  if (examInfoEl) {
-    const dash = examInfoEl.textContent ? ' · ' : '';
-    const next = !isAllowedToday() ? nextAllowedDate() : null;
-    const hint = isAllowedToday()
-      ? 'по плану'
-      : 'вне плана' + (next ? `, далее: ${fmtDate(next)}` : '');
-    examInfoEl.textContent += dash + `расписание: ${hint}`;
-  }
-}
-
 function renderCards() {
   const deck = currentDeck();
   const tbody = document.querySelector('tbody');
   const empty = document.querySelector('.empty-state');
   tbody.innerHTML = '';
-
   if (!deck) {
     empty.style.display = 'block';
-    empty.textContent = 'Сначала создай и выбери колоду';
+    empty.textContent = 'Сначала выбери колоду (Библиотека → Открыть)';
     return;
   }
-
   const q = (document.getElementById('searchInput')?.value || '').toLowerCase();
   const topicFilter = (
     document.getElementById('topicFilter')?.value || ''
   ).trim();
-
-  let cards = deck.cards.filter((c) => {
+  const cards = deck.cards.filter((c) => {
     const f = (c.front || '').toLowerCase();
     const b = (c.back || '').toLowerCase();
     const okSearch = !q || f.includes(q) || b.includes(q);
     const okTopic = !topicFilter || (c.topic || '') === topicFilter;
     return okSearch && okTopic;
   });
-
   if (!cards.length) {
     empty.style.display = 'block';
     empty.textContent = 'Нет карточек или нет совпадений';
@@ -355,345 +523,70 @@ function renderCards() {
     return;
   }
   empty.style.display = 'none';
-
   cards.forEach((c) => {
     const tr = document.createElement('tr');
-
     const frontCell = c.front?.trim()
       ? highlight(c.front, q)
       : c.frontImg
       ? '🖼️ Фото'
-      : "<span style='color:var(--text-muted)'>—</span>";
+      : '<span style="color:var(--text-muted)">—</span>';
     const backCell = c.back?.trim()
       ? highlight(c.back, q)
       : c.backImg
       ? '🖼️ Фото'
-      : "<span style='color:var(--text-muted)'>—</span>";
+      : '<span style="color:var(--text-muted)">—</span>';
     const typeLabel =
       (c.type === 'single' ? ' (тест)' : '') +
       (c.frontImg || c.backImg ? ' 📷' : '');
-
     tr.innerHTML = `
       <td>${frontCell}</td>
       <td>${backCell}${typeLabel}</td>
       <td>${c.topic || '<span style="color:var(--text-muted)">—</span>'}</td>
       <td>${c.interval || 0} дн.</td>
       <td>
-        <button class="btn-secondary btn" style="padding:4px 8px;" onclick="editCard('${
+        <button class="btn btn-secondary" style="padding:4px 8px" onclick="editCard('${
           c.id
         }')">Изм.</button>
-        <button class="btn-secondary btn" style="padding:4px 8px;color:#f87171;border-color:#f87171;" onclick="deleteCard('${
+        <button class="btn btn-secondary" style="padding:4px 8px;color:#f87171;border-color:#f87171" onclick="deleteCard('${
           c.id
         }')">✕</button>
       </td>`;
     tbody.appendChild(tr);
   });
-
   renderTopicFilter();
 }
-
-// --- study
-function renderOptionsForStudy(card) {
-  const container = document.getElementById('optionsContainer');
-  container.innerHTML = '';
-  if (!card.options || !card.options.length) return;
-  card.options.forEach((opt) => {
-    const item = document.createElement('label');
-    item.className = 'option-item';
-    item.dataset.id = opt.id;
-    const input = document.createElement('input');
-    input.type = 'radio';
-    input.name = 'studyOption';
-    const span = document.createElement('span');
-    span.textContent = opt.text;
-    item.appendChild(input);
-    item.appendChild(span);
-    container.appendChild(item);
-  });
-}
-
-function renderStudy() {
-  const deck = currentDeck();
-  const lbl = document.querySelector('.study-label');
-  const txt = document.querySelector('.study-text');
-  const btns = document.querySelector('.study-actions');
-  const optionsContainer = document.getElementById('optionsContainer');
-
-  if (!deck || !state.studyQueue.length) {
-    lbl.textContent = 'Вопрос';
-    txt.textContent = 'Выбери колоду и нажми «Учить».';
-    optionsContainer.innerHTML = '';
-    btns.innerHTML = '';
-    return;
-  }
-
-  const card = state.studyQueue[state.studyIndex];
-  if (!card) {
-    lbl.textContent = 'Готово';
-    txt.textContent = 'Все карточки повторены ✅';
-    optionsContainer.innerHTML = '';
-    btns.innerHTML = '';
-    return;
-  }
-
-  const isTest = card.type === 'single' && card.options?.length;
-
-  if (isTest) {
-    if (!state.studyShowAnswer) {
-      lbl.textContent = 'Тест (один правильный ответ)';
-      const sideText = state.studyShowAnswer
-        ? card.back || ''
-        : card.front || '';
-      txt.innerHTML = sideText ? marked.parse(sideText) : '';
-      MathJax.typesetPromise();
-
-      const old = document.getElementById('studyDynamicImg');
-      if (old) old.remove();
-      const imgToShow = state.studyShowAnswer
-        ? card.backImg || null
-        : card.frontImg || null;
-      if (imgToShow) {
-        const img = document.createElement('img');
-        img.id = 'studyDynamicImg';
-        img.className = 'study-img';
-        img.src = imgToShow;
-        txt.parentElement.appendChild(img);
-      }
-
-      renderOptionsForStudy(card);
-      btns.innerHTML =
-        '<button class="btn" onclick="checkTest()">Проверить</button>';
-    } else {
-      lbl.textContent = 'Проверка';
-      const sideText = state.studyShowAnswer
-        ? card.back || ''
-        : card.front || '';
-      txt.innerHTML = sideText ? marked.parse(sideText) : '';
-      MathJax.typesetPromise();
-
-      const old = document.getElementById('studyDynamicImg');
-      if (old) old.remove();
-      const imgToShow = state.studyShowAnswer
-        ? card.backImg || null
-        : card.frontImg || null;
-      if (imgToShow) {
-        const img = document.createElement('img');
-        img.id = 'studyDynamicImg';
-        img.className = 'study-img';
-        img.src = imgToShow;
-        txt.parentElement.appendChild(img);
-      }
-
-      MathJax.typesetPromise();
-      btns.innerHTML =
-        '<button class="btn" onclick="rate(true)">Знал</button>' +
-        '<button class="btn btn-secondary" onclick="rate(false)">Не знал</button>';
-    }
-  } else {
-    optionsContainer.innerHTML = '';
-    lbl.textContent = state.studyShowAnswer ? 'Ответ' : 'Вопрос';
-    const sideText = state.studyShowAnswer ? card.back || '' : card.front || '';
-    txt.innerHTML = sideText ? marked.parse(sideText) : '';
-    MathJax.typesetPromise();
-
-    txt.innerHTML = marked.parse(
-      state.studyShowAnswer ? card.back : card.front
-    );
-
-    const old = document.getElementById('studyDynamicImg');
-    if (old) old.remove();
-    const imgToShow = state.studyShowAnswer
-      ? card.backImg || null
-      : card.frontImg || null;
-    if (imgToShow) {
-      const img = document.createElement('img');
-      img.id = 'studyDynamicImg';
-      img.className = 'study-img';
-      img.src = imgToShow;
-      txt.parentElement.appendChild(img);
-    }
-
-    MathJax.typesetPromise();
-    btns.innerHTML = state.studyShowAnswer
-      ? '<button class="btn btn-secondary" onclick="backToQuestion()">← Назад</button>' +
-        '<button class="btn" onclick="rate(true)">Знал</button>' +
-        '<button class="btn btn-secondary" onclick="rate(false)">Не знал</button>'
-      : '<button class="btn" onclick="showAns()">Показать ответ</button>';
-  }
-}
-
-function startStudy() {
-  // расписание
-  const allowed = isAllowedToday();
-  if (!allowed) {
-    const next = nextAllowedDate();
-    if (state.schedule?.enforce) {
-      showToast(
-        'Сегодня не по плану. Ближайшее занятие: ' +
-          (next ? fmtDate(next) : '—')
-      );
-      return;
-    } else {
-      showToast('Сегодня не отмечен в расписании (можно всё равно учиться).');
-    }
-  }
-
-  const deck = currentDeck();
-  if (!deck || !deck.cards.length) {
-    showToast('Нет карточек');
-    return;
-  }
-
-  const topicFilter = (
-    document.getElementById('topicFilter')?.value || ''
-  ).trim();
-  const base = deck.cards.filter(
-    (c) => !topicFilter || (c.topic || '') === topicFilter
-  );
-  const due = base.filter((c) => !c.due || c.due <= Date.now());
-
-  if (!due.length && !base.length) {
-    showToast('В этой теме нет карточек');
-    return;
-  }
-  if (!due.length) {
-    showToast('На сегодня нет карточек в этой теме, повторим все из темы');
-  }
-
-  state.studyQueue = due.length ? due : base;
-  state.studyIndex = 0;
-  state.studyShowAnswer = false;
-  state.mode = 'study';
-  save();
-  renderAll();
-}
-
-function showAns() {
-  state.studyShowAnswer = true;
-  renderStudy();
-}
-
-function resetTestSelections() {
-  const container = document.getElementById('optionsContainer');
-  if (!container) return;
-  container.querySelectorAll('.option-item').forEach((item) => {
-    item.classList.remove('opt-correct', 'opt-incorrect', 'opt-missed');
-    const input = item.querySelector('input');
-    if (input) {
-      input.checked = false;
-      input.disabled = false;
-    }
-  });
-}
-function backToQuestion() {
-  state.studyShowAnswer = false;
-  resetTestSelections();
-  renderStudy();
-}
-
-function checkTest() {
-  const card = state.studyQueue[state.studyIndex];
-  if (!card || !card.options?.length) return;
-  const container = document.getElementById('optionsContainer');
-  const items = Array.from(container.querySelectorAll('.option-item'));
-  const selectedIds = items
-    .filter((it) => it.querySelector('input').checked)
-    .map((it) => it.dataset.id);
-  if (!selectedIds.length) {
-    showToast('Выбери вариант');
-    return;
-  }
-  const correctIds = card.options.filter((o) => o.correct).map((o) => o.id);
-
-  items.forEach((item) => {
-    const input = item.querySelector('input');
-    const id = item.dataset.id;
-    const isCorrect = correctIds.includes(id);
-    item.classList.remove('opt-correct', 'opt-incorrect', 'opt-missed');
-    input.disabled = true;
-    if (isCorrect && input.checked) item.classList.add('opt-correct');
-    else if (!isCorrect && input.checked) item.classList.add('opt-incorrect');
-    else if (isCorrect && !input.checked) item.classList.add('opt-missed');
-  });
-
-  state.studyShowAnswer = true;
-  renderStudy();
-}
-
-function rate(knew) {
-  const card = state.studyQueue[state.studyIndex];
-  if (!card) return;
-  nextInterval(card, knew);
-  state.stats.studiedToday = (state.stats.studiedToday || 0) + 1;
-  const today = new Date().toDateString();
-  if (state.stats.lastDate !== today) {
-    state.stats.streak =
-      state.stats.lastDate === null ? 1 : (state.stats.streak || 0) + 1;
-    state.stats.lastDate = today;
-  }
-  state.studyIndex++;
-  state.studyShowAnswer = false;
-  save();
-  renderAll();
-}
-
-// --- export/import
-function exportData() {
-  const blob = new Blob([JSON.stringify(state.decks, null, 2)], {
-    type: 'application/json',
-  });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'flashcards.json';
-  a.click();
-}
-function importData(file) {
-  const r = new FileReader();
-  r.onload = () => {
-    try {
-      const imported = JSON.parse(r.result);
-      if (Array.isArray(imported)) {
-        imported.forEach((deck) => {
-          if (!state.decks.find((d) => d.title === deck.title))
-            state.decks.push(deck);
-        });
-        save();
-        renderAll();
-        showToast('📦 Импортировано');
-      }
-    } catch (e) {
-      showToast('Ошибка импорта');
-    }
-  };
-  r.readAsText(file);
-}
-
-// --- CRUD cards
-function editCard(id) {
+window.editCard = function (id) {
   const deck = currentDeck();
   if (!deck) return;
   const c = deck.cards.find((x) => x.id === id);
   if (!c) return;
   document.getElementById('cardTopicInput').value = c.topic || '';
-  document.getElementById('cardFrontInput').value = c.front;
-  document.getElementById('cardBackInput').value = c.back;
+  document.getElementById('cardFrontInput').value = c.front || '';
+  document.getElementById('cardBackInput').value = c.back || '';
   document.getElementById('cardTypeSelect').value = c.type || 'basic';
   setFieldImage('front', c.frontImg || null);
   setFieldImage('back', c.backImg || null);
   document.getElementById('frontImgFile').value = '';
   document.getElementById('backImgFile').value = '';
-
   refreshOptionsEditorVisibility();
   clearOptionsEditor();
-  if (c.type === 'single' && Array.isArray(c.options)) {
+  if (c.type === 'single' && Array.isArray(c.options))
     c.options.forEach((opt) => addOptionRow(opt));
-  }
   const form = document.querySelector('.card-form');
   form.dataset.edit = id;
   document.getElementById('saveCardBtn').textContent = 'Сохранить изменения';
   document.getElementById('cancelEditBtn').style.display = 'inline-block';
-}
-
+};
+window.deleteCard = function (id) {
+  const deck = currentDeck();
+  if (!deck) return;
+  deck.cards = deck.cards.filter((c) => c.id !== id);
+  save();
+  renderCards();
+  renderTopicFilter();
+  renderTopicPanel();
+  showToast('🗑️ Удалено');
+};
 function cancelEdit() {
   const form = document.querySelector('.card-form');
   delete form.dataset.edit;
@@ -708,36 +601,23 @@ function cancelEdit() {
   showToast('❌ Редактирование отменено');
   clearFormImagesInline();
 }
-
-function deleteCard(id) {
-  const deck = currentDeck();
-  if (!deck) return;
-  deck.cards = deck.cards.filter((c) => c.id !== id);
-  save();
-  renderCards();
-  showToast('🗑️ Удалено');
-}
-
 function saveCard() {
   const deck = currentDeck();
   if (!deck) {
-    showToast('Сначала создай колоду');
+    showToast('Сначала выбери колоду в Библиотеке');
     return;
   }
-
   const { frontImg, backImg } = getFormImages();
   const front = document.getElementById('cardFrontInput').value.trim();
   const back = document.getElementById('cardBackInput').value.trim();
   const type = document.getElementById('cardTypeSelect').value;
   const topic = document.getElementById('cardTopicInput').value.trim();
-
   const frontOK = !!front || !!frontImg;
   const backOK = !!back || !!backImg;
   if (!frontOK || !backOK) {
     showToast('Нужен текст или фото на каждой стороне');
     return;
   }
-
   let options = [];
   if (type === 'single') {
     const rows = Array.from(
@@ -750,11 +630,11 @@ function saveCard() {
     rows.forEach((row) => {
       const textInput = row.querySelector('.option-text');
       const radio = row.querySelector("input[type='radio']");
-      const text = textInput.value.trim();
-      if (!text) return;
+      const t = (textInput.value || '').trim();
+      if (!t) return;
       options.push({
         id: row.dataset.id || uid('opt'),
-        text,
+        text: t,
         correct: radio.checked,
       });
     });
@@ -763,7 +643,6 @@ function saveCard() {
       return;
     }
   }
-
   const form = document.querySelector('.card-form');
   const editId = form.dataset.edit;
   if (editId) {
@@ -794,7 +673,6 @@ function saveCard() {
       due: Date.now(),
     });
   }
-
   document.getElementById('cardFrontInput').value = '';
   document.getElementById('cardBackInput').value = '';
   document.getElementById('cardTypeSelect').value = 'basic';
@@ -803,52 +681,473 @@ function saveCard() {
   refreshOptionsEditorVisibility();
   document.getElementById('saveCardBtn').textContent = 'Сохранить';
   document.getElementById('cancelEditBtn').style.display = 'none';
-
   save();
   renderCards();
+  renderWorkspaceScheduleBox();
+  renderTopicPanel();
   showToast('💾 Сохранено');
   clearFormImagesInline();
 }
 
-// --- render all
-function renderAll() {
-  renderDeckList();
-  renderHeader();
-  renderCards();
-  if (state.mode === 'study') renderStudy();
+function shuffleArray(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
 
-  const manage = document.getElementById('manageSection');
-  const study = document.getElementById('studySection');
-  if (manage && study) {
-    manage.style.display = state.mode === 'manage' ? 'block' : 'none';
-    study.style.display = state.mode === 'study' ? 'block' : 'none';
+function renderOptionsForStudy(card) {
+  const container = document.getElementById('optionsContainer');
+  container.innerHTML = '';
+  if (!card.options || !card.options.length) return;
+  card.options.forEach((opt) => {
+    const item = document.createElement('label');
+    item.className = 'option-item';
+    item.dataset.id = opt.id;
+    const input = document.createElement('input');
+    input.type = 'radio';
+    input.name = 'studyOption';
+    const span = document.createElement('span');
+    span.textContent = opt.text;
+    item.append(input, span);
+    container.appendChild(item);
+  });
+}
+function renderStudy() {
+  const deck = currentDeck();
+  const lbl = document.querySelector('.study-label');
+  const txt = document.querySelector('.study-text');
+  const btns = document.querySelector('.study-actions');
+  const optionsContainer = document.getElementById('optionsContainer');
+  if (!deck || !state.studyQueue.length) {
+    lbl.textContent = 'Вопрос';
+    txt.textContent = 'Выбери колоду и нажми «Учить».';
+    optionsContainer.innerHTML = '';
+    btns.innerHTML = '';
+    return;
+  }
+  const card = state.studyQueue[state.studyIndex];
+  if (!card) {
+    lbl.textContent = 'Готово';
+    txt.textContent = 'Все карточки повторены ✅';
+    optionsContainer.innerHTML = '';
+    btns.innerHTML = '';
+    return;
+  }
+  const isTest = card.type === 'single' && card.options?.length;
+  const setSide = (showAnswer) => {
+    const sideText = showAnswer ? card.back || '' : card.front || '';
+    txt.innerHTML = sideText ? marked.parse(sideText) : '';
+    const old = document.getElementById('studyDynamicImg');
+    if (old) old.remove();
+    const imgToShow = showAnswer ? card.backImg || null : card.frontImg || null;
+    if (imgToShow) {
+      const img = document.createElement('img');
+      img.id = 'studyDynamicImg';
+      img.className = 'study-img';
+      img.src = imgToShow;
+      txt.parentElement.appendChild(img);
+    }
+    MathJax.typesetPromise();
+  };
+  if (isTest) {
+    // Для single choice НИКОГДА не показываем "ответную сторону"
+    lbl.textContent = 'Тест (один правильный ответ)';
+    setSide(false); // всегда фронт (вопрос)
+    renderOptionsForStudy(card);
+
+    // Кнопка "Проверить"
+    btns.innerHTML = '<button class="btn" id="btnCheck">Проверить</button>';
+    document.getElementById('btnCheck').onclick = checkTest;
+
+    return; // выходим, дальше обычный (не-тестовый) код не выполняется
+  } else {
+    // старый код для обычных карточек (оставь как был)
+    optionsContainer.innerHTML = '';
+    lbl.textContent = state.studyShowAnswer ? 'Ответ' : 'Вопрос';
+    setSide(state.studyShowAnswer);
+    btns.innerHTML = state.studyShowAnswer
+      ? '<button class="btn btn-secondary" id="btnBack">← Назад</button><button class="btn" id="btnKnow">Знал</button><button class="btn btn-secondary" id="btnDont">Не знал</button>'
+      : '<button class="btn" id="btnShow">Показать ответ</button>';
+    if (!state.studyShowAnswer)
+      document.getElementById('btnShow').onclick = showAns;
+    else {
+      document.getElementById('btnBack').onclick = backToQuestion;
+      document.getElementById('btnKnow').onclick = () => rate(true);
+      document.getElementById('btnDont').onclick = () => rate(false);
+    }
   }
 }
 
-// --- DOMContentLoaded
+function startStudy() {
+  const deck = currentDeck();
+  if (!deck || !deck.cards.length) {
+    showToast('Нет карточек');
+    return;
+  }
+  const topicFilter = (
+    document.getElementById('topicFilter')?.value || ''
+  ).trim();
+  const base = deck.cards.filter(
+    (c) => !topicFilter || (c.topic || '') === topicFilter
+  );
+  const due = base.filter((c) => !c.due || c.due <= Date.now());
+  if (!due.length && !base.length) {
+    showToast('В этой теме нет карточек');
+    return;
+  }
+  if (!due.length) {
+    showToast('На сегодня нет карточек в этой теме, повторим все из темы');
+  }
+  state.studyQueue = shuffleArray(due.length ? due : base);
+
+  state.studyIndex = 0;
+  state.studyShowAnswer = false;
+  state.mode = 'study';
+  document.getElementById('studySection').style.display = 'block';
+  renderHeader();
+  renderStudy();
+  save();
+  updateWorkspaceVisibility();
+}
+function showAns() {
+  state.studyShowAnswer = true;
+  renderStudy();
+}
+function resetTestSelections() {
+  const c = document.getElementById('optionsContainer');
+  if (!c) return;
+  c.querySelectorAll('.option-item').forEach((item) => {
+    item.classList.remove('opt-correct', 'opt-incorrect', 'opt-missed');
+    const input = item.querySelector('input');
+    if (input) {
+      input.checked = false;
+      input.disabled = false;
+    }
+  });
+}
+function backToQuestion() {
+  state.studyShowAnswer = false;
+  resetTestSelections();
+  renderStudy();
+}
+function checkTest() {
+  const card = state.studyQueue[state.studyIndex];
+  if (!card || !card.options?.length) return;
+
+  const container = document.getElementById('optionsContainer');
+  const items = [...container.querySelectorAll('.option-item')];
+
+  const selectedIds = items
+    .filter((i) => i.querySelector('input').checked)
+    .map((i) => i.dataset.id);
+
+  if (!selectedIds.length) {
+    showToast('Выбери вариант');
+    return;
+  }
+
+  const correctIds = card.options.filter((o) => o.correct).map((o) => o.id);
+
+  items.forEach((item) => {
+    const input = item.querySelector('input');
+    const id = item.dataset.id;
+    const isCorrect = correctIds.includes(id);
+
+    item.classList.remove('opt-correct', 'opt-incorrect', 'opt-missed');
+    input.disabled = true;
+
+    if (isCorrect && input.checked) item.classList.add('opt-correct');
+    else if (!isCorrect && input.checked) item.classList.add('opt-incorrect');
+    else if (isCorrect && !input.checked) item.classList.add('opt-missed');
+  });
+
+  // НИКАКИХ state.studyShowAnswer и renderStudy()
+  // Просто меняем кнопки на "Знал / Не знал"
+  const lbl = document.querySelector('.study-label');
+  const btns = document.querySelector('.study-actions');
+  if (lbl) lbl.textContent = 'Проверка';
+
+  btns.innerHTML =
+    '<button class="btn" id="btnKnow">Знал</button>' +
+    '<button class="btn btn-secondary" id="btnDont">Не знал</button>';
+
+  document.getElementById('btnKnow').onclick = () => rate(true);
+  document.getElementById('btnDont').onclick = () => rate(false);
+}
+
+function rate(knew) {
+  const card = state.studyQueue[state.studyIndex];
+  if (!card) return;
+  nextInterval(card, knew);
+  state.stats.studiedToday = (state.stats.studiedToday || 0) + 1;
+  const today = new Date().toDateString();
+  if (state.stats.lastDate !== today) {
+    state.stats.streak =
+      state.stats.lastDate === null ? 1 : (state.stats.streak || 0) + 1;
+    state.stats.lastDate = today;
+  }
+  state.studyIndex++;
+  state.studyShowAnswer = false;
+  save();
+  renderHeader();
+  renderStudy();
+}
+
+// ---- Export/Import ----
+function exportData() {
+  const blob = new Blob([JSON.stringify(state.decks, null, 2)], {
+    type: 'application/json',
+  });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'flashcards.json';
+  a.click();
+}
+function importData(file) {
+  const r = new FileReader();
+  r.onload = () => {
+    try {
+      const imported = JSON.parse(r.result);
+      if (Array.isArray(imported)) {
+        imported.forEach((deck) => {
+          if (!state.decks.find((d) => d.title === deck.title))
+            state.decks.push(deck);
+        });
+        save();
+        if (state.page === 'library') renderLibrary();
+        showToast('📦 Импортировано');
+      }
+    } catch {
+      showToast('Ошибка импорта');
+    }
+  };
+  r.readAsText(file);
+}
+// --- Schedule helpers/UI for Workspace (ГЛОБАЛЬНО) ---
+function ensureScheduleIds() {
+  if (!state.schedule || !Array.isArray(state.schedule.weekly)) return;
+  state.schedule.weekly.forEach((arr, d) => {
+    if (!Array.isArray(arr)) state.schedule.weekly[d] = [];
+    state.schedule.weekly[d].forEach((it) => {
+      if (!it.id) it.id = uid('sch');
+    });
+  });
+}
+
+function getDeckTopicsSafe() {
+  const deck = currentDeck();
+  return deck ? getDeckTopics(deck) : [];
+}
+
+function renderWorkspaceScheduleBox() {
+  const box = document.getElementById('wsScheduleBox');
+  const deck = currentDeck();
+  if (!box) return;
+
+  if (!deck || state.mode === 'study') {
+    // ← добавили проверку режима
+    box.style.display = 'none';
+    return;
+  }
+  box.style.display = 'block';
+
+  const dl = document.getElementById('topicsDatalist');
+  if (dl) {
+    dl.innerHTML = '';
+    getDeckTopicsSafe().forEach((t) => {
+      const o = document.createElement('option');
+      o.value = t;
+      dl.appendChild(o);
+    });
+  }
+
+  renderScheduleListForDeck(deck.id);
+}
+function renderTopicPanel() {
+  const panel = document.getElementById('topicList');
+  if (!panel) return;
+  const deck = currentDeck();
+  panel.innerHTML = '';
+
+  if (!deck) {
+    panel.innerHTML = `<div class="muted">Сначала выбери колоду</div>`;
+    return;
+  }
+
+  const current = (document.getElementById('topicFilter')?.value || '').trim();
+  const col = getDeckColor(deck);
+
+  // «Все темы»
+  const all = document.createElement('div');
+  const allActive = current === '';
+  all.className = 'topic-pill' + (allActive ? ' active' : '');
+  all.textContent = 'Все темы';
+  all.style.border = `1px solid ${withAlpha(col, 0.45)}`;
+  all.style.background = allActive
+    ? withAlpha(col, 0.55)
+    : withAlpha(col, 0.15);
+  if (allActive) all.style.color = '#fff';
+  all.onmouseenter = () => {
+    all.style.background = withAlpha(col, allActive ? 0.6 : 0.25);
+  };
+  all.onmouseleave = () => {
+    all.style.background = withAlpha(col, allActive ? 0.55 : 0.15);
+  };
+  all.onclick = () => applyTopicFilter('');
+  panel.appendChild(all);
+
+  // Конкретные темы
+  getDeckTopics(deck).forEach((t) => {
+    const active = t === current;
+    const pill = document.createElement('div');
+    pill.className = 'topic-pill' + (active ? ' active' : '');
+    pill.textContent = t;
+    pill.title = t;
+    pill.style.border = `1px solid ${withAlpha(col, 0.45)}`;
+    pill.style.background = active
+      ? withAlpha(col, 0.55)
+      : withAlpha(col, 0.15);
+    if (active) pill.style.color = '#fff';
+    pill.onmouseenter = () => {
+      pill.style.background = withAlpha(col, active ? 0.6 : 0.25);
+    };
+    pill.onmouseleave = () => {
+      pill.style.background = withAlpha(col, active ? 0.55 : 0.15);
+    };
+    pill.onclick = () => applyTopicFilter(t);
+    panel.appendChild(pill);
+  });
+}
+
+// Применить фильтр темы из плашки
+function applyTopicFilter(topic) {
+  const sel = document.getElementById('topicFilter');
+  if (sel) sel.value = topic || '';
+  renderCards(); // обновим таблицу
+  renderTopicPanel(); // подсветим активную плашку
+  if (state.page === 'workspace' && state.mode === 'study') {
+    startStudy(); // учим только выбранную тему
+  }
+}
+function renderScheduleListForDeck(deckId) {
+  const wrap = document.getElementById('scheduleList');
+  if (!wrap) return;
+  const wdNamesFull = [
+    'Понедельник',
+    'Вторник',
+    'Среда',
+    'Четверг',
+    'Пятница',
+    'Суббота',
+    'Воскресенье',
+  ];
+
+  const rows = [];
+  (state.schedule.weekly || []).forEach((arr, weekday) => {
+    (arr || []).forEach((it) => {
+      if (it.deckId === deckId) rows.push({ weekday, item: it });
+    });
+  });
+
+  if (!rows.length) {
+    wrap.innerHTML = `<div class="muted">Пока нет запланированных занятий для этой колоды.</div>`;
+    return;
+  }
+
+  rows.sort((a, b) => a.weekday - b.weekday);
+  wrap.innerHTML = '';
+  rows.forEach(({ weekday, item }) => {
+    const row = document.createElement('div');
+    row.className = 'ws-sched-item';
+    row.innerHTML = `
+      <div class="left">
+        <span class="ws-day">${wdNamesFull[weekday]}</span>
+        ${item.topic ? `<span class="ws-topic">• ${item.topic}</span>` : ''}
+      </div>
+      <button class="btn btn-secondary" style="padding:4px 10px" data-del="${
+        item.id
+      }">Удалить</button>
+    `;
+    row.querySelector('[data-del]').onclick = () =>
+      removeScheduleItemById(item.id);
+    wrap.appendChild(row);
+
+    const col = getDeckColor(currentDeck());
+    row.style.borderColor = withAlpha(col, 0.4);
+    row.style.background = withAlpha(col, 0.1);
+  });
+}
+
+function removeScheduleItemById(id) {
+  let removed = false;
+  (state.schedule.weekly || []).forEach((arr, i) => {
+    if (!Array.isArray(arr)) return;
+    const before = arr.length;
+    state.schedule.weekly[i] = arr.filter((it) => it.id !== id);
+    if (state.schedule.weekly[i].length !== before) removed = true;
+  });
+  if (removed) {
+    save();
+    showToast('🗑️ Удалено из расписания');
+    renderWorkspaceScheduleBox();
+    if (state.page === 'home') renderHomeCalendar();
+  }
+}
+
+// ---- DOM Ready ----
 document.addEventListener('DOMContentLoaded', () => {
   load();
-  renderAll();
-  refreshOptionsEditorVisibility();
+  ensureSchedule();
+  ensureScheduleIds();
 
-  // create deck
-  document.getElementById('createDeckBtn').addEventListener('click', () => {
+  // Сайдбар навигация
+  document.querySelectorAll('.nav-item').forEach((b) => {
+    b.onclick = () => setPage(b.dataset.page);
+  });
+
+  // Главная: неделя навигация
+  document.getElementById('prevWeek').onclick = () => {
+    state.uiWeekOffset -= 1;
+    renderHomeCalendar();
+    save();
+  };
+  document.getElementById('nextWeek').onclick = () => {
+    state.uiWeekOffset += 1;
+    renderHomeCalendar();
+    save();
+  };
+  document.getElementById('openScheduleGuide').onclick = () => {
+    showToast(
+      'Открой «Рабочее место» → «Расписание для колоды», выбери день и тему, нажми «+ Добавить».'
+    );
+  };
+
+  // Кнопки на главной
+  document.querySelectorAll('[data-goto]').forEach((b) => {
+    b.onclick = () => setPage(b.getAttribute('data-goto'));
+  });
+
+  // Создание колоды
+  document.getElementById('createDeckBtn').onclick = () => {
     const titleInput = document.getElementById('deckTitleInput');
     const descInput = document.getElementById('deckDescInput');
     const examInput = document.getElementById('deckExamInput');
+    const colorInput = document.getElementById('deckColorInput');
 
     const title = titleInput.value.trim();
     const desc = descInput.value.trim();
     const examDate = examInput.value;
+    const color = (colorInput?.value || '#a855f7').trim();
 
     if (!title) {
       showToast('Введите название колоды');
       return;
     }
-    const exists = state.decks.some(
-      (d) => d.title.toLowerCase() === title.toLowerCase()
-    );
-    if (exists) {
+    if (
+      state.decks.some((d) => d.title.toLowerCase() === title.toLowerCase())
+    ) {
       showToast('Колода с таким названием уже есть');
       return;
     }
@@ -859,98 +1158,68 @@ document.addEventListener('DOMContentLoaded', () => {
       description: desc,
       cards: [],
       examDate: examDate || null,
+      color,
     };
+
     state.decks.push(newDeck);
     state.selectedDeckId = newDeck.id;
 
     titleInput.value = '';
     descInput.value = '';
     examInput.value = '';
+    if (colorInput) colorInput.value = color;
+
     save();
-    renderAll();
+    renderLibrary();
     showToast('✨ Колода создана');
-  });
-
-  // image buttons
-  document
-    .getElementById('frontImgBtn')
-    .addEventListener('click', () =>
-      document.getElementById('frontImgFile').click()
-    );
-  document
-    .getElementById('backImgBtn')
-    .addEventListener('click', () =>
-      document.getElementById('backImgFile').click()
-    );
-
-  document
-    .getElementById('frontImgFile')
-    .addEventListener('change', async (e) => {
-      const f = e.target.files?.[0];
-      if (!f) return;
-      if (!f.type.startsWith('image/')) {
-        showToast('Нужен файл-изображение');
-        return;
-      }
-      setFieldImage('front', await readFileAsDataURL(f));
-    });
-  document
-    .getElementById('backImgFile')
-    .addEventListener('change', async (e) => {
-      const f = e.target.files?.[0];
-      if (!f) return;
-      if (!f.type.startsWith('image/')) {
-        showToast('Нужен файл-изображение');
-        return;
-      }
-      setFieldImage('back', await readFileAsDataURL(f));
-    });
-
-  // thumbs close
-  document.querySelectorAll('.thumb .x').forEach((x) => {
-    x.addEventListener('click', () => {
-      const t = x.dataset.target; // 'front' | 'back'
-      setFieldImage(t, null);
-      document.getElementById(
-        t === 'front' ? 'frontImgFile' : 'backImgFile'
-      ).value = '';
-    });
-  });
-
-  // card form
-  document.getElementById('saveCardBtn').addEventListener('click', saveCard);
-  document
-    .getElementById('cancelEditBtn')
-    .addEventListener('click', cancelEdit);
-  document
-    .getElementById('cardTypeSelect')
-    .addEventListener('change', refreshOptionsEditorVisibility);
-  document
-    .getElementById('addOptionBtn')
-    .addEventListener('click', () => addOptionRow());
-
-  // mode buttons
-  const modeBtns = document.querySelectorAll('.mode-btn');
-  modeBtns[0].onclick = () => {
-    state.mode = 'manage';
-    renderAll();
   };
-  modeBtns[1].onclick = startStudy;
 
-  // search
-  const searchEl = document.getElementById('searchInput');
-  if (searchEl) searchEl.addEventListener('input', renderCards);
+  // Workspace: расписание — добавить элемент
+  const addBtn = document.getElementById('scheduleAddBtn');
+  if (addBtn)
+    addBtn.onclick = () => {
+      const deck = currentDeck();
+      if (!deck) {
+        showToast('Сначала выбери колоду');
+        return;
+      }
 
-  // topic filter
-  const topicSel = document.getElementById('topicFilter');
-  if (topicSel) {
-    topicSel.addEventListener('change', () => {
-      renderCards();
-      if (state.mode === 'study') startStudy();
-    });
-  }
+      const wdSel = document.getElementById('scheduleWeekday');
+      const topicInp = document.getElementById('scheduleTopic');
+      const weekday = parseInt(wdSel.value, 10);
+      const topic = (topicInp.value || '').trim();
 
-  // export/import
+      ensureSchedule();
+      ensureScheduleIds();
+
+      // проверим дубль (та же колода, тот же день, та же тема)
+      const arr =
+        state.schedule.weekly[weekday] || (state.schedule.weekly[weekday] = []);
+      const isDuplicate = arr.some(
+        (it) => it.deckId === deck.id && (it.topic || '') === (topic || '')
+      );
+      if (isDuplicate) {
+        showToast('Уже есть такой пункт в расписании');
+        return;
+      }
+
+      const item = {
+        id: uid('sch'),
+        deckId: deck.id,
+        topic: topic || undefined,
+      };
+      arr.push(item);
+      save();
+
+      showToast('✅ Добавлено в расписание');
+      renderWorkspaceScheduleBox();
+      if (state.page === 'home') renderHomeCalendar();
+    };
+
+  // Поиск в библиотеке
+  document.getElementById('libSearch').oninput = renderLibrary;
+
+  // Экспорт/Импорт
   document.getElementById('exportBtn').onclick = exportData;
   document.getElementById('importBtn').onclick = () => {
     const f = document.createElement('input');
@@ -959,73 +1228,120 @@ document.addEventListener('DOMContentLoaded', () => {
     f.onchange = (e) => importData(e.target.files[0]);
     f.click();
   };
+});
 
-  // schedule UI
-  function applyScheduleToUI() {
-    const d = state.schedule.days || {};
-    document.getElementById('schMon').checked = !!d.mon;
-    document.getElementById('schTue').checked = !!d.tue;
-    document.getElementById('schWed').checked = !!d.wed;
-    document.getElementById('schThu').checked = !!d.thu;
-    document.getElementById('schFri').checked = !!d.fri;
-    document.getElementById('schSat').checked = !!d.sat;
-    document.getElementById('schSun').checked = !!d.sun;
-    document.getElementById('schEnforce').checked = !!state.schedule.enforce;
-  }
-  function wireScheduleHandlers() {
-    const map = [
-      ['schMon', 'mon'],
-      ['schTue', 'tue'],
-      ['schWed', 'wed'],
-      ['schThu', 'thu'],
-      ['schFri', 'fri'],
-      ['schSat', 'sat'],
-      ['schSun', 'sun'],
-    ];
-    map.forEach(([id, key]) => {
-      const el = document.getElementById(id);
-      if (el)
-        el.addEventListener('change', () => {
-          state.schedule.days[key] = el.checked;
-          save();
-        });
-    });
-    const enf = document.getElementById('schEnforce');
-    if (enf)
-      enf.addEventListener('change', () => {
-        state.schedule.enforce = enf.checked;
-        save();
-      });
-  }
-  applyScheduleToUI();
-  wireScheduleHandlers();
+const deckColorPicker = document.getElementById('deckColorPicker');
+if (deckColorPicker) {
+  deckColorPicker.addEventListener('input', (e) => {
+    const deck = currentDeck();
+    if (!deck) return;
+    deck.color = e.target.value || '#a855f7';
+    save();
+    renderHeader();
+    renderLibrary();
+    renderHomeCalendar();
+    renderTopicPanel();
+    renderWorkspaceScheduleBox();
+  });
+}
 
-  // keyboard
-  document.addEventListener('keydown', (e) => {
-    if (state.mode === 'study') {
-      if (e.code === 'Space') {
-        e.preventDefault();
-        if (!state.studyShowAnswer) showAns();
-      }
-      if (e.key === '1') rate(true);
-      if (e.key === '2') rate(false);
-      if (
-        state.studyShowAnswer &&
-        (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'b')
-      ) {
-        e.preventDefault();
-        backToQuestion();
-      }
+// Workspace: переключатель режимов
+document.querySelectorAll('.mode-btn').forEach((btn) => {
+  btn.onclick = () => {
+    state.mode = btn.dataset.mode;
+    if (state.mode === 'study') startStudy();
+    else {
+      renderHeader();
+      renderCards();
     }
-    if (e.ctrlKey && e.key === 'Enter') saveCard();
+    updateWorkspaceVisibility();
+    document
+      .querySelectorAll('.mode-btn')
+      .forEach((b) => b.classList.toggle('active', b === btn));
+    save();
+  };
+});
+
+// --- Schedule helpers/UI for Workspace ---
+
+// Workspace: изображения
+document.getElementById('frontImgBtn').onclick = () =>
+  document.getElementById('frontImgFile').click();
+document.getElementById('backImgBtn').onclick = () =>
+  document.getElementById('backImgFile').click();
+document
+  .getElementById('frontImgFile')
+  .addEventListener('change', async (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (!f.type.startsWith('image/')) {
+      showToast('Нужен файл-изображение');
+      return;
+    }
+    setFieldImage('front', await readFileAsDataURL(f));
+  });
+document.getElementById('backImgFile').addEventListener('change', async (e) => {
+  const f = e.target.files?.[0];
+  if (!f) return;
+  if (!f.type.startsWith('image/')) {
+    showToast('Нужен файл-изображение');
+    return;
+  }
+  setFieldImage('back', await readFileAsDataURL(f));
+});
+document.querySelectorAll('.thumb .x').forEach((x) => {
+  x.addEventListener('click', () => {
+    const t = x.dataset.target;
+    setFieldImage(t, null);
+    document.getElementById(
+      t === 'front' ? 'frontImgFile' : 'backImgFile'
+    ).value = '';
   });
 });
 
-// expose for inline buttons in table
-window.editCard = editCard;
-window.deleteCard = deleteCard;
-window.checkTest = checkTest;
-window.rate = rate;
-window.showAns = showAns;
-window.backToQuestion = backToQuestion;
-window.startStudy = startStudy;
+// Workspace: форма карточки
+document
+  .getElementById('cardTypeSelect')
+  .addEventListener('change', refreshOptionsEditorVisibility);
+document
+  .getElementById('addOptionBtn')
+  .addEventListener('click', () => addOptionRow());
+document.getElementById('saveCardBtn').addEventListener('click', saveCard);
+document.getElementById('cancelEditBtn').addEventListener('click', cancelEdit);
+
+// Workspace: поиск/фильтр
+const searchEl = document.getElementById('searchInput');
+if (searchEl) searchEl.addEventListener('input', renderCards);
+const topicSel = document.getElementById('topicFilter');
+if (topicSel)
+  topicSel.addEventListener('change', () => {
+    renderCards();
+    renderTopicPanel();
+    if (state.mode === 'study') startStudy();
+  });
+
+// Горячие клавиши
+document.addEventListener('keydown', (e) => {
+  if (state.page === 'workspace' && state.mode === 'study') {
+    if (e.code === 'Space') {
+      e.preventDefault();
+      if (!state.studyShowAnswer) showAns();
+    }
+    if (e.key === '1') rate(true);
+    if (e.key === '2') rate(false);
+    if (
+      state.studyShowAnswer &&
+      (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'b')
+    ) {
+      e.preventDefault();
+      backToQuestion();
+    }
+  }
+  if (e.ctrlKey && e.key === 'Enter') saveCard();
+});
+
+// Первый показ
+setPage(state.page || 'home');
+
+// Экспорт helper в окно (чтобы легко заполнять расписание вручную)
+window.addScheduleItem = addScheduleItem;
