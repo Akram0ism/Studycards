@@ -293,12 +293,28 @@ function renderLibrary() {
     const deckColor = getDeckColor(d);
     card.style.borderColor = withAlpha(deckColor, 0.35);
     card.style.boxShadow = `0 0 12px ${withAlpha(deckColor, 0.12)}`;
+
     card.innerHTML = `
-      <div class="title" style="color:${deckColor}">${d.title}</div>
+      <div class="row-between" style="align-items:flex-start; gap:8px;">
+        <div class="title" style="color:${deckColor}">${d.title}</div>
+        <div class="deck-menu">
+          <button class="icon-btn deck-menu-toggle" title="Меню">⋮</button>
+          <div class="deck-menu-popup">
+            <button type="button" data-action="color">Изменить цвет</button>
+            <button type="button" data-action="export">Экспорт колоды</button>
+            <button type="button" data-action="import">Импорт в колоду</button>
+          </div>
+        </div>
+      </div>
+
       <div class="desc">${d.description || 'Без описания'}</div>
       <div class="row" style="gap:6px;margin-top:4px">
         <span class="badge">${d.cards?.length || 0} карточек</span>
-        ${d.examDate ? `<span class="badge">${formatExamBadge(d)}</span>` : ``}
+        ${
+          d.examDate
+            ? `<span class="badge">${formatExamBadge(d)}</span>`
+            : ``
+        }
         <span class="badge" style="border-color:${withAlpha(
           deckColor,
           0.5
@@ -310,6 +326,7 @@ function renderLibrary() {
       </div>
     `;
 
+    // Открыть колоду
     card.querySelector('[data-open]').onclick = () => {
       state.selectedDeckId = d.id;
       state.mode = 'manage';
@@ -321,6 +338,7 @@ function renderLibrary() {
       setPage('workspace');
     };
 
+    // Удалить колоду
     card.querySelector('[data-del]').onclick = () => {
       if (confirm(`Удалить колоду «${d.title}»?`)) {
         state.decks = state.decks.filter((x) => x.id !== d.id);
@@ -329,9 +347,52 @@ function renderLibrary() {
         renderLibrary();
       }
     };
+
+    // Меню "три точки"
+    const menuToggle = card.querySelector('.deck-menu-toggle');
+    const menuPopup = card.querySelector('.deck-menu-popup');
+
+    if (menuToggle && menuPopup) {
+      menuToggle.onclick = (e) => {
+        e.stopPropagation();
+        // закрываем другие открытые меню
+        document
+          .querySelectorAll('.deck-menu-popup.open')
+          .forEach((m) => m !== menuPopup && m.classList.remove('open'));
+        menuPopup.classList.toggle('open');
+      };
+
+      // Клик по действиям
+      menuPopup.onclick = (e) => {
+        e.stopPropagation();
+        const btn = e.target.closest('button[data-action]');
+        if (!btn) return;
+        const action = btn.dataset.action;
+        menuPopup.classList.remove('open');
+
+        if (action === 'color') {
+          // Открываем эту колоду и color-picker
+          state.selectedDeckId = d.id;
+          state.mode = 'manage';
+          setPage('workspace');
+          const picker = document.getElementById('deckColorPicker');
+          if (picker) picker.click();
+        }
+
+        if (action === 'export') {
+          exportDeck(d.id);
+        }
+
+        if (action === 'import') {
+          importIntoDeck(d.id);
+        }
+      };
+    }
+
     grid.appendChild(card);
   });
 }
+
 
 // ---- WORKSPACE ----
 function highlight(text, q) {
@@ -1004,36 +1065,90 @@ function rate(knew) {
 }
 
 // ---- Export/Import ----
-function exportData() {
-  const blob = new Blob([JSON.stringify(state.decks, null, 2)], {
-    type: 'application/json',
-  });
+// ---- Export/Import одной колоды ----
+function exportDeck(deckId) {
+  const deck = state.decks.find((d) => d.id === deckId);
+  if (!deck) {
+    showToast('Колода не найдена');
+    return;
+  }
+  const safeTitle = (deck.title || 'deck').replace(/[^a-z0-9_\-а-яё]/gi, '_');
+  const blob = new Blob(
+    [JSON.stringify(deck, null, 2)],
+    { type: 'application/json' }
+  );
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'flashcards.json';
+  a.download = `deck_${safeTitle}.json`;
   a.click();
 }
 
-function importData(file) {
-  const r = new FileReader();
-  r.onload = () => {
-    try {
-      const imported = JSON.parse(r.result);
-      if (Array.isArray(imported)) {
-        imported.forEach((deck) => {
-          if (!state.decks.find((d) => d.title === deck.title))
-            state.decks.push(deck);
-        });
+function importIntoDeck(deckId) {
+  const deck = state.decks.find((d) => d.id === deckId);
+  if (!deck) {
+    showToast('Колода не найдена');
+    return;
+  }
+
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json,application/json';
+  input.onchange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const r = new FileReader();
+    r.onload = () => {
+      try {
+        const parsed = JSON.parse(r.result);
+
+        // ожидаем либо объект с cards, либо массив карточек
+        let cards = [];
+        if (Array.isArray(parsed)) {
+          cards = parsed;
+        } else if (parsed && Array.isArray(parsed.cards)) {
+          cards = parsed.cards;
+        } else {
+          showToast('Неподходящий формат JSON');
+          return;
+        }
+
+        const prepared = cards.map((c) => ({
+          id: c.id || uid('card'),
+          front: c.front || '',
+          back: c.back || '',
+          type: c.type || 'basic',
+          options: Array.isArray(c.options) ? c.options : [],
+          frontImg: c.frontImg || null,
+          backImg: c.backImg || null,
+          topic: c.topic || '',
+          createdAt: c.createdAt || Date.now(),
+          interval: c.interval || 0,
+          reps: c.reps || 0,
+          due: c.due || Date.now(),
+        }));
+
+        if (!Array.isArray(deck.cards)) deck.cards = [];
+        deck.cards.push(...prepared);
+
         save();
-        if (state.page === 'library') renderLibrary();
-        showToast('📦 Импортировано');
+        showToast(`📥 Импортировано карточек: ${prepared.length}`);
+
+        // если эта колода сейчас открыта — обновим таблицу
+        if (state.selectedDeckId === deckId && state.page === 'workspace') {
+          renderCards();
+          renderWorkspaceScheduleBox();
+          renderTopicPanel();
+        }
+      } catch (err) {
+        console.error(err);
+        showToast('Ошибка импорта');
       }
-    } catch {
-      showToast('Ошибка импорта');
-    }
+    };
+    r.readAsText(file);
   };
-  r.readAsText(file);
+  input.click();
 }
+
 
 // ---- Schedule helpers for Workspace ----
 function getDeckTopicsSafe() {
@@ -1486,6 +1601,12 @@ document.addEventListener('DOMContentLoaded', () => {
       save();
     };
   });
+  // Закрывать все меню по клику вне
+  document.addEventListener('click', () => {
+    document
+      .querySelectorAll('.deck-menu-popup.open')
+      .forEach((m) => m.classList.remove('open'));
+  });
 
   // Горячие клавиши
   document.addEventListener('keydown', (e) => {
@@ -1506,6 +1627,17 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (e.ctrlKey && e.key === 'Enter') saveCard();
   });
+    // Закрывать все меню по клику вне
+    document.addEventListener('click', (e) => {
+      // Если клик внутри меню (кнопка ⋮ или сам попап) — ничего не делаем
+      if (e.target.closest('.deck-menu')) return;
+    
+      // Клик снаружи — закрываем все открытые меню
+      document
+        .querySelectorAll('.deck-menu-popup.open')
+        .forEach((m) => m.classList.remove('open'));
+    });
+    
 
   // Первый показ
   setPage(state.page || 'home');
