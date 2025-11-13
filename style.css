@@ -403,7 +403,6 @@ th {
   position: absolute;
   right: 8px;
   bottom: 8px;
-  border: none;
   border-radius: 8px;
   padding: 4px 8px;
   font-size: 13px;
@@ -728,4 +727,137 @@ select.input::-webkit-scrollbar-thumb {
 
 .deck-menu-popup button:hover {
   background: rgba(255, 255, 255, 0.06);
+}
+/* Контейнер для иконок в поле */
+.field .field-tools {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  gap: 4px;
+}
+
+/* Сбросим абсолют у самих кнопок, чтобы они не накладывались */
+.field .field-tools .icon-btn {
+  position: static;
+}
+.img-tool-btn {
+  /* чуть подровняем вид по сравнению с обычной btn-secondary */
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.img-tool-btn.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+
+
+.img-editor-canvas-wrap {
+  position: relative;
+}
+
+/* слой над canvas, в нём живут текстовые блоки */
+#imgEditorTextLayer {
+  position: absolute;
+  inset: 8px; /* совпадает с padding обёртки */
+  pointer-events: none; /* клики только по самим блокам */
+}
+
+/* текстовый блок как в PowerPoint */
+.img-text-box {
+  position: absolute;
+  min-width: 80px;
+  min-height: 24px;
+  padding: 2px 4px;
+  font-size: 14px;
+  color: #ffffff;
+  border: 1px dashed rgba(148, 163, 184, 0.9);
+  background: rgba(15, 23, 42, 0.75);
+  border-radius: 4px;
+  cursor: move;
+  pointer-events: auto; /* важно! */
+  white-space: pre-wrap;
+}
+
+.img-text-box:focus {
+  outline: 1px solid var(--accent);
+  cursor: text;
+}
+.img-tool-btn,
+.img-shape-style-btn {
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.img-tool-btn.active,
+.img-shape-style-btn.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+/* Поле-форма в мини-редакторе (правильный ответ) */
+.img-form-box {
+  position: absolute;
+  min-width: 100px;
+  min-height: 24px;
+  padding: 2px 4px;
+  font-size: 14px;
+  color: #f97316; /* оранжевый, чтобы отличалось от обычного текста */
+  border: 1px solid rgba(249, 115, 22, 0.9);
+  background: rgba(15, 23, 42, 0.8);
+  border-radius: 4px;
+  cursor: move;
+  pointer-events: auto;
+  white-space: pre-wrap;
+}
+
+.img-form-box:focus {
+  outline: 1px solid var(--accent);
+  cursor: text;
+}
+
+/* подсветка результатов проверки форм в режиме Учить */
+.form-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.form-row label {
+  font-size: 12px;
+  color: var(--text-muted);
+  min-width: 60px;
+}
+
+.form-row input {
+  flex: 1;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.form-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+
+.form-row.correct input {
+  border-color: #16a34a;
+  background: rgba(22, 163, 74, 0.12);
+}
+
+.form-row.wrong input {
+  border-color: #b91c1c;
+  background: rgba(185, 28, 28, 0.12);
 }
