@@ -308,8 +308,13 @@ function renderLibrary() {
       state.selectedDeckId = d.id;
       state.mode = 'manage';
       state.studyShowAnswer = false;
+
+      const topicSel = document.getElementById('topicFilter');
+      if (topicSel) topicSel.value = '';
+
       setPage('workspace');
     };
+
     card.querySelector('[data-del]').onclick = () => {
       if (confirm(`Удалить колоду «${d.title}»?`)) {
         state.decks = state.decks.filter((x) => x.id !== d.id);
@@ -738,9 +743,24 @@ function renderStudy() {
   const isTest = card.type === 'single' && card.options?.length;
   const setSide = (showAnswer) => {
     const sideText = showAnswer ? card.back || '' : card.front || '';
-    txt.innerHTML = sideText ? marked.parse(sideText) : '';
+
+    // рендерим текст безопасно
+    let html = '';
+    if (sideText) {
+      if (window.marked && typeof marked.parse === 'function') {
+        // если библиотека marked подключена — используем её
+        html = marked.parse(sideText);
+      } else {
+        // простой запасной вариант: переносы строк → <br>
+        html = sideText.replace(/\n/g, '<br>');
+      }
+    }
+
+    txt.innerHTML = html;
+
     const old = document.getElementById('studyDynamicImg');
     if (old) old.remove();
+
     const imgToShow = showAnswer ? card.backImg || null : card.frontImg || null;
     if (imgToShow) {
       const img = document.createElement('img');
@@ -749,8 +769,13 @@ function renderStudy() {
       img.src = imgToShow;
       txt.parentElement.appendChild(img);
     }
-    MathJax.typesetPromise();
+
+    // защита для MathJax
+    if (window.MathJax && MathJax.typesetPromise) {
+      MathJax.typesetPromise();
+    }
   };
+
   if (isTest) {
     // Для single choice НИКОГДА не показываем "ответную сторону"
     lbl.textContent = 'Тест (один правильный ответ)';
@@ -779,38 +804,80 @@ function renderStudy() {
     }
   }
 }
-
 function startStudy() {
-  const deck = currentDeck();
-  if (!deck || !deck.cards.length) {
-    showToast('Нет карточек');
-    return;
-  }
-  const topicFilter = (
-    document.getElementById('topicFilter')?.value || ''
-  ).trim();
-  const base = deck.cards.filter(
-    (c) => !topicFilter || (c.topic || '') === topicFilter
+  // для отладки — можно потом удалить
+  console.log(
+    'startStudy called',
+    'decks:',
+    state.decks,
+    'selectedDeckId:',
+    state.selectedDeckId
   );
-  const due = base.filter((c) => !c.due || c.due <= Date.now());
-  if (!due.length && !base.length) {
-    showToast('В этой теме нет карточек');
+
+  let deck = currentDeck();
+
+  // Если колода не выбрана, но колоды есть — берём первую
+  if (!deck) {
+    if (state.decks && state.decks.length) {
+      deck = state.decks[0];
+      state.selectedDeckId = deck.id;
+      console.log('No currentDeck, fallback to first deck:', deck.title);
+    } else {
+      showToast('Сначала создай колоду в Библиотеке');
+      return;
+    }
+  }
+
+  if (!deck.cards || !deck.cards.length) {
+    showToast('В этой колоде пока нет карточек');
     return;
   }
-  if (!due.length) {
-    showToast('На сегодня нет карточек в этой теме, повторим все из темы');
-  }
-  state.studyQueue = shuffleArray(due.length ? due : base);
 
+  const topicSel = document.getElementById('topicFilter');
+  let topicFilter = (topicSel?.value || '').trim();
+
+  // базовый набор — все карточки колоды
+  let base = deck.cards;
+
+  // если выбрана тема — пробуем сузить
+  if (topicFilter) {
+    const byTopic = deck.cards.filter((c) => (c.topic || '') === topicFilter);
+
+    if (byTopic.length) {
+      base = byTopic; // учим только эту тему
+    } else {
+      // нет карточек с такой темой → сбрасываем фильтр и учим всё
+      if (topicSel) topicSel.value = '';
+      topicFilter = '';
+      showToast('В этой теме нет карточек — учим всю колоду');
+      base = deck.cards;
+    }
+  }
+
+  const now = Date.now();
+  const due = base.filter((c) => !c.due || c.due <= now);
+
+  const pool = due.length ? due : base;
+  if (!pool.length) {
+    showToast('В этой колоде нет карточек для повторения');
+    return;
+  }
+
+  // рандомный порядок
+  state.studyQueue = shuffleArray(pool.slice());
   state.studyIndex = 0;
   state.studyShowAnswer = false;
+
   state.mode = 'study';
-  document.getElementById('studySection').style.display = 'block';
+  const studySection = document.getElementById('studySection');
+  if (studySection) studySection.style.display = 'block';
+
   renderHeader();
   renderStudy();
   save();
   updateWorkspaceVisibility();
 }
+
 function showAns() {
   state.studyShowAnswer = true;
   renderStudy();
