@@ -25,13 +25,15 @@ const imgEditor = {
   canvas: null,
   ctx: null,
   side: null, // 'front' | 'back'
-  tool: 'brush', // 'brush' | 'rect' | 'circle' | 'text'
+  tool: 'brush', // 'brush' | 'eraser' | 'rect' | 'circle' | 'text' | 'field'
   color: '#ffffff',
   size: 5,
   drawing: false,
   startX: 0,
   startY: 0,
   savedImageData: null, // для прямоугольника / круга
+  textLayer: null,
+  shapeStyle: 'stroke',
 };
 
 // ---- Utils ----
@@ -464,9 +466,29 @@ function getFormImages() {
   const backField = document.getElementById('backField');
   const front = frontField?.dataset.img || null;
   const back = backField?.dataset.img || null;
+
+  let frontForms = [];
+  let backForms = [];
+  try {
+    if (frontField?.dataset.forms) {
+      frontForms = JSON.parse(frontField.dataset.forms) || [];
+    }
+  } catch (e) {
+    frontForms = [];
+  }
+  try {
+    if (backField?.dataset.forms) {
+      backForms = JSON.parse(backField.dataset.forms) || [];
+    }
+  } catch (e) {
+    backForms = [];
+  }
+
   return {
     frontImg: front && front.startsWith('data:') ? front : null,
     backImg: back && back.startsWith('data:') ? back : null,
+    frontForms,
+    backForms,
   };
 }
 
@@ -757,10 +779,10 @@ function saveCard() {
     showToast('Сначала выбери колоду в Библиотеке');
     return;
   }
-  const { frontImg, backImg } = getFormImages();
+  const { frontImg, backImg, frontForms, backForms } = getFormImages();
   const front = document.getElementById('cardFrontInput').value.trim();
   const back = document.getElementById('cardBackInput').value.trim();
-  const type = document.getElementById('cardTypeSelect').value;
+  let type = document.getElementById('cardTypeSelect').value;
   const topic = document.getElementById('cardTopicInput').value.trim();
   const frontOK = !!front || !!frontImg;
   const backOK = !!back || !!backImg;
@@ -769,6 +791,11 @@ function saveCard() {
     return;
   }
   let options = [];
+  // если на изображении созданы формы, автоматически считаем карточку "формой"
+  if ((frontForms && frontForms.length) || (backForms && backForms.length)) {
+    type = 'form';
+  }
+
   if (type === 'single') {
     const rows = Array.from(
       document.querySelectorAll('#optionsList .option-row')
@@ -805,9 +832,12 @@ function saveCard() {
         options: type === 'single' ? options : [],
         frontImg,
         backImg,
+        frontForms: Array.isArray(frontForms) ? frontForms : [],
+        backForms: Array.isArray(backForms) ? backForms : [],
         topic,
       });
     }
+
     if (form) delete form.dataset.edit;
   } else {
     deck.cards.push({
@@ -818,6 +848,8 @@ function saveCard() {
       options: type === 'single' ? options : [],
       frontImg,
       backImg,
+      frontForms: Array.isArray(frontForms) ? frontForms : [],
+      backForms: Array.isArray(backForms) ? backForms : [],
       topic,
       createdAt: Date.now(),
       interval: 0,
@@ -825,6 +857,7 @@ function saveCard() {
       due: Date.now(),
     });
   }
+
   document.getElementById('cardFrontInput').value = '';
   document.getElementById('cardBackInput').value = '';
   document.getElementById('cardTypeSelect').value = 'basic';
@@ -877,6 +910,7 @@ function renderStudy() {
   const optionsContainer = document.getElementById('optionsContainer');
   if (!lbl || !txt || !btns || !optionsContainer) return;
 
+  // нет колоды / нет очереди
   if (!deck || !state.studyQueue.length) {
     lbl.textContent = 'Вопрос';
     txt.textContent = 'Выбери колоду и нажми «Учить».';
@@ -895,12 +929,18 @@ function renderStudy() {
   }
 
   const isTest = card.type === 'single' && card.options?.length;
+  const isForm =
+    card.type === 'form' &&
+    Array.isArray(card.frontForms) &&
+    card.frontForms.length;
 
   const setSide = (showAnswer) => {
     const sideText = showAnswer ? card.back || '' : card.front || '';
     txt.innerHTML = renderMarkdown(sideText);
+
     const old = document.getElementById('studyDynamicImg');
     if (old) old.remove();
+
     const imgToShow = showAnswer ? card.backImg || null : card.frontImg || null;
     if (imgToShow) {
       const img = document.createElement('img');
@@ -912,8 +952,8 @@ function renderStudy() {
     typesetMath();
   };
 
+  // ---------- Тест с одним правильным ответом ----------
   if (isTest) {
-    // single choice — никогда не показываем "ответную сторону"
     lbl.textContent = 'Тест (один правильный ответ)';
     setSide(false);
     renderOptionsForStudy(card);
@@ -921,12 +961,74 @@ function renderStudy() {
     btns.innerHTML = '<button class="btn" id="btnCheck">Проверить</button>';
     document.getElementById('btnCheck').onclick = checkTest;
     return;
-  } else {
+  }
+
+  // ---------- Карточка-форма: поля с вводом ----------
+  else if (isForm) {
+    // Этап 1: пользователь заполняет поля
+    if (!state.studyShowAnswer) {
+      lbl.textContent = 'Заполни поля';
+      setSide(false); // показываем сторону вопроса (front + картинка)
+
+      optionsContainer.innerHTML = '';
+
+      (card.frontForms || []).forEach((f, idx) => {
+        const row = document.createElement('div');
+        row.className = 'form-row';
+        row.dataset.id = f.id;
+
+        const label = document.createElement('label');
+        label.textContent = f.label || `Поле ${idx + 1}`;
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.autocomplete = 'off';
+
+        row.append(label, input);
+        optionsContainer.appendChild(row);
+      });
+
+      btns.innerHTML =
+        '<button class="btn" id="btnCheckForm">Проверить</button>';
+
+      document.getElementById('btnCheckForm').onclick = () => {
+        // просто раскрываем ответную сторону
+        state.studyShowAnswer = true;
+        renderStudy();
+      };
+
+      return;
+    }
+
+    // Этап 2: показываем ответную сторону как у обычной карточки
+    lbl.textContent = 'Ответ';
+    setSide(true); // back + картинка
+
+    // поля ввода оставляем как есть, чтобы студент видел свои ответы
+    btns.innerHTML =
+      '<button class="btn btn-secondary" id="btnBack">← Назад</button>' +
+      '<button class="btn" id="btnKnow">Знал</button>' +
+      '<button class="btn btn-secondary" id="btnDont">Не знал</button>';
+
+    document.getElementById('btnBack').onclick = () => {
+      state.studyShowAnswer = false;
+      renderStudy();
+    };
+    document.getElementById('btnKnow').onclick = () => rate(true);
+    document.getElementById('btnDont').onclick = () => rate(false);
+    return;
+  }
+
+  // ---------- Обычная карточка (вопрос / ответ) ----------
+  else {
     optionsContainer.innerHTML = '';
     lbl.textContent = state.studyShowAnswer ? 'Ответ' : 'Вопрос';
     setSide(state.studyShowAnswer);
+
     btns.innerHTML = state.studyShowAnswer
-      ? '<button class="btn btn-secondary" id="btnBack">← Назад</button><button class="btn" id="btnKnow">Знал</button><button class="btn btn-secondary" id="btnDont">Не знал</button>'
+      ? '<button class="btn btn-secondary" id="btnBack">← Назад</button>' +
+        '<button class="btn" id="btnKnow">Знал</button>' +
+        '<button class="btn btn-secondary" id="btnDont">Не знал</button>'
       : '<button class="btn" id="btnShow">Показать ответ</button>';
 
     if (!state.studyShowAnswer) {
@@ -1589,15 +1691,17 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // ---------- ИНИЦИАЛИЗАЦИЯ МИНИ-ФОТОШОПА ----------
+  // ---------- ИНИЦИАЛИЗАЦИЯ МИНИ-ФОТОШОПА + ТЕКСТОВЫЕ БЛОКИ ----------
   function initImageEditor() {
     const overlay = document.getElementById('imgEditorOverlay');
     const canvas = document.getElementById('imgEditorCanvas');
-    if (!overlay || !canvas) return;
+    const textLayer = document.getElementById('imgEditorTextLayer');
+    if (!overlay || !canvas || !textLayer) return;
 
     imgEditor.overlay = overlay;
     imgEditor.canvas = canvas;
     imgEditor.ctx = canvas.getContext('2d');
+    imgEditor.textLayer = textLayer;
 
     const closeBtn = document.getElementById('imgEditorCloseBtn');
     const saveBtn = document.getElementById('imgEditorSaveBtn');
@@ -1611,8 +1715,100 @@ document.addEventListener('DOMContentLoaded', () => {
         imgEditor.side = null;
       };
 
+    // функция: перенести все текстовые блоки на canvas
+    // функция: перенести все текстовые блоки на canvas
+    function commitTextBoxesToCanvas() {
+      const layer = imgEditor.textLayer;
+      if (!layer) return;
+
+      const boxes = Array.from(layer.querySelectorAll('.img-text-box'));
+      if (!boxes.length) return;
+
+      const { ctx } = imgEditor;
+      const c = imgEditor.canvas;
+      const canvasRect = c.getBoundingClientRect();
+      const sx = c.width / canvasRect.width;
+      const sy = c.height / canvasRect.height;
+
+      boxes.forEach((box) => {
+        const rect = box.getBoundingClientRect();
+        const text = box.textContent || '';
+        if (!text.trim()) return;
+
+        const color = box.dataset.color || '#ffffff';
+        const fontSize = parseInt(box.dataset.size || '16', 10);
+
+        const xDom = rect.left - canvasRect.left;
+        const yDom = rect.top - canvasRect.top;
+
+        const x = xDom * sx;
+        const y = yDom * sy + fontSize;
+
+        ctx.fillStyle = color;
+        ctx.font = `${fontSize}px system-ui, sans-serif`;
+        ctx.fillText(text, x, y);
+      });
+    }
+
+    // собрать данные форм (правильные ответы) и нарисовать рамки на canvas
+    function commitFormBoxes(side) {
+      const layer = imgEditor.textLayer;
+      if (!layer) return [];
+      const forms = Array.from(layer.querySelectorAll('.img-form-box'));
+      if (!forms.length) return [];
+
+      const { ctx } = imgEditor;
+      const c = imgEditor.canvas;
+      const canvasRect = c.getBoundingClientRect();
+      const sx = c.width / canvasRect.width;
+      const sy = c.height / canvasRect.height;
+
+      const result = [];
+
+      forms.forEach((box, idx) => {
+        const rect = box.getBoundingClientRect();
+        const labelText = (box.textContent || '').trim() || `Поле ${idx + 1}`;
+        const answer = (box.textContent || '').trim();
+        if (!answer) return;
+
+        const xDom = rect.left - canvasRect.left;
+        const yDom = rect.top - canvasRect.top;
+        const wDom = rect.width;
+        const hDom = rect.height;
+
+        const x = xDom * sx;
+        const y = yDom * sy;
+        const w = wDom * sx;
+        const h = hDom * sy;
+
+        // просто рисуем пустую рамку на изображении
+        ctx.strokeStyle = '#f97316';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x, y, w, h);
+
+        result.push({
+          id: uid('form'),
+          label: labelText,
+        });
+      });
+
+      // положим JSON в dataset соответствующего поля формы
+      const fieldId = side === 'front' ? 'frontField' : 'backField';
+      const field = document.getElementById(fieldId);
+      if (field) {
+        field.dataset.forms = JSON.stringify(result);
+      }
+
+      return result;
+    }
+
     if (saveBtn)
       saveBtn.onclick = () => {
+        // 1) текстовые блоки рисуем на canvas
+        commitTextBoxesToCanvas();
+        // 2) формы тоже рисуем рамками + сохраняем правильные ответы в dataset
+        commitFormBoxes(imgEditor.side || 'front');
+
         const dataUrl = imgEditor.canvas.toDataURL('image/png');
         if (imgEditor.side === 'front') {
           setFieldImage('front', dataUrl);
@@ -1624,12 +1820,12 @@ document.addEventListener('DOMContentLoaded', () => {
         imgEditor.side = null;
         showToast('🖼️ Изображение сохранено в карточку');
       };
-
     if (clearBtn)
       clearBtn.onclick = () => {
         const { ctx, canvas } = imgEditor;
         ctx.fillStyle = '#0b1120';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
+        if (imgEditor.textLayer) imgEditor.textLayer.innerHTML = '';
       };
 
     if (colorInp)
@@ -1643,18 +1839,49 @@ document.addEventListener('DOMContentLoaded', () => {
       };
 
     // выбор инструмента
-    document.querySelectorAll('.img-tool-btn').forEach((btn) => {
+    const toolButtons = document.querySelectorAll('.img-tool-btn');
+
+    const updateToolButtons = () => {
+      toolButtons.forEach((b) => {
+        b.classList.toggle('active', b.dataset.tool === imgEditor.tool);
+      });
+    };
+
+    toolButtons.forEach((btn) => {
       btn.onclick = () => {
-        const tool = btn.dataset.tool;
-        imgEditor.tool = tool;
-        document
-          .querySelectorAll('.img-tool-btn')
-          .forEach((b) => b.classList.remove('active'));
-        btn.classList.add('active');
+        imgEditor.tool = btn.dataset.tool;
+        updateToolButtons();
       };
     });
 
+    // подсветим инструмент по умолчанию (brush)
+    updateToolButtons();
+
+    // выбор стиля фигуры: контур / заливка
+    const shapeButtons = document.querySelectorAll('.img-shape-style-btn');
+
+    const updateShapeButtons = () => {
+      shapeButtons.forEach((b) => {
+        b.classList.toggle(
+          'active',
+          b.dataset.shapeStyle === imgEditor.shapeStyle
+        );
+      });
+    };
+
+    shapeButtons.forEach((btn) => {
+      btn.onclick = () => {
+        imgEditor.shapeStyle = btn.dataset.shapeStyle || 'stroke';
+        updateShapeButtons();
+      };
+    });
+
+    // подсветим начальное состояние (контур)
+    updateShapeButtons();
+
     const c = canvas;
+    const { textLayer: layer } = imgEditor;
+
     const getPos = (ev) => {
       const rect = c.getBoundingClientRect();
       const sx = c.width / rect.width;
@@ -1664,29 +1891,141 @@ document.addEventListener('DOMContentLoaded', () => {
         return {
           x: (ev.touches[0].clientX - rect.left) * sx,
           y: (ev.touches[0].clientY - rect.top) * sy,
+          clientX: ev.touches[0].clientX,
+          clientY: ev.touches[0].clientY,
         };
       }
       return {
         x: (ev.clientX - rect.left) * sx,
         y: (ev.clientY - rect.top) * sy,
+        clientX: ev.clientX,
+        clientY: ev.clientY,
       };
     };
 
+    // создание текстового блока
+    function createTextBox(ev) {
+      const rect = c.getBoundingClientRect();
+      const clientX = ev.clientX ?? ev.touches?.[0]?.clientX;
+      const clientY = ev.clientY ?? ev.touches?.[0]?.clientY;
+      if (clientX == null || clientY == null) return;
+
+      const xDom = clientX - rect.left;
+      const yDom = clientY - rect.top;
+
+      const box = document.createElement('div');
+      box.className = 'img-text-box';
+      const fontSize = Math.max(imgEditor.size * 3, 12);
+      box.dataset.color = imgEditor.color;
+      box.dataset.size = String(fontSize);
+      box.style.color = imgEditor.color;
+      box.style.fontSize = fontSize + 'px';
+      box.style.left = xDom + 'px';
+      box.style.top = yDom + 'px';
+      box.contentEditable = 'true';
+      box.textContent = 'Текст';
+
+      // drag state
+      let dragging = false;
+      let offsetX = 0;
+      let offsetY = 0;
+
+      box.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        // если кликнули по уже фокусном блоке, всё равно можно таскать
+        dragging = true;
+        const r = box.getBoundingClientRect();
+        offsetX = e.clientX - r.left;
+        offsetY = e.clientY - r.top;
+        e.preventDefault();
+      });
+
+      document.addEventListener('mousemove', (e) => {
+        if (!dragging) return;
+        const rCanvas = c.getBoundingClientRect();
+        let x = e.clientX - rCanvas.left - offsetX;
+        let y = e.clientY - rCanvas.top - offsetY;
+        box.style.left = x + 'px';
+        box.style.top = y + 'px';
+      });
+
+      document.addEventListener('mouseup', () => {
+        dragging = false;
+      });
+
+      layer.appendChild(box);
+      box.focus();
+      // ставим каретку в конец
+      document.getSelection()?.selectAllChildren(box);
+      document.getSelection()?.collapseToEnd();
+    }
+    // создание поля-формы с правильным ответом
+    function createFormBox(ev) {
+      const rect = c.getBoundingClientRect();
+      const clientX = ev.clientX ?? ev.touches?.[0]?.clientX;
+      const clientY = ev.clientY ?? ev.touches?.[0]?.clientY;
+      if (clientX == null || clientY == null) return;
+
+      const xDom = clientX - rect.left;
+      const yDom = clientY - rect.top;
+
+      const box = document.createElement('div');
+      box.className = 'img-form-box';
+      const fontSize = Math.max(imgEditor.size * 3, 12);
+      box.dataset.size = String(fontSize);
+      box.style.fontSize = fontSize + 'px';
+      box.style.left = xDom + 'px';
+      box.style.top = yDom + 'px';
+      box.style.width = '140px';
+      box.style.height = '26px';
+      box.contentEditable = 'true';
+      box.textContent = 'Имя поля';
+
+      let dragging = false;
+      let offsetX = 0;
+      let offsetY = 0;
+
+      box.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        // если клик по тексту — сначала таскаем, потом можно редактировать
+        dragging = true;
+        const r = box.getBoundingClientRect();
+        offsetX = e.clientX - r.left;
+        offsetY = e.clientY - r.top;
+        e.preventDefault();
+      });
+
+      document.addEventListener('mousemove', (e) => {
+        if (!dragging) return;
+        const rCanvas = c.getBoundingClientRect();
+        let x = e.clientX - rCanvas.left - offsetX;
+        let y = e.clientY - rCanvas.top - offsetY;
+        box.style.left = x + 'px';
+        box.style.top = y + 'px';
+      });
+
+      document.addEventListener('mouseup', () => {
+        dragging = false;
+      });
+
+      layer.appendChild(box);
+      box.focus();
+      document.getSelection()?.selectAllChildren(box);
+      document.getSelection()?.collapseToEnd();
+    }
+
     const startDraw = (ev) => {
       ev.preventDefault();
-      const { x, y } = getPos(ev);
+      const pos = getPos(ev);
+      const { x, y } = pos;
       const ctx = imgEditor.ctx;
 
       if (imgEditor.tool === 'text') {
-        const text = prompt('Введите текст:');
-        if (text) {
-          ctx.fillStyle = imgEditor.color;
-          ctx.font = `${Math.max(
-            imgEditor.size * 4,
-            12
-          )}px system-ui, sans-serif`;
-          ctx.fillText(text, x, y);
-        }
+        createTextBox(ev);
+        return;
+      }
+      if (imgEditor.tool === 'field') {
+        createFormBox(ev);
         return;
       }
 
@@ -1697,7 +2036,7 @@ document.addEventListener('DOMContentLoaded', () => {
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
 
-      if (imgEditor.tool === 'brush') {
+      if (imgEditor.tool === 'brush' || imgEditor.tool === 'eraser') {
         ctx.beginPath();
         ctx.moveTo(x, y);
       } else if (imgEditor.tool === 'rect' || imgEditor.tool === 'circle') {
@@ -1708,28 +2047,49 @@ document.addEventListener('DOMContentLoaded', () => {
     const moveDraw = (ev) => {
       if (!imgEditor.drawing) return;
       ev.preventDefault();
-      const { x, y } = getPos(ev);
+      const pos = getPos(ev);
+      const { x, y } = pos;
       const ctx = imgEditor.ctx;
 
-      ctx.strokeStyle = imgEditor.color;
       ctx.lineWidth = imgEditor.size;
 
       if (imgEditor.tool === 'brush') {
+        ctx.strokeStyle = imgEditor.color;
+        ctx.lineTo(x, y);
+        ctx.stroke();
+      } else if (imgEditor.tool === 'eraser') {
+        // Ластик: рисуем цветом фона холста
+        ctx.strokeStyle = '#0b1120';
         ctx.lineTo(x, y);
         ctx.stroke();
       } else if (imgEditor.tool === 'rect') {
         ctx.putImageData(imgEditor.savedImageData, 0, 0);
         const w = x - imgEditor.startX;
         const h = y - imgEditor.startY;
-        ctx.strokeRect(imgEditor.startX, imgEditor.startY, w, h);
+
+        if (imgEditor.shapeStyle === 'fill') {
+          ctx.fillStyle = imgEditor.color;
+          ctx.fillRect(imgEditor.startX, imgEditor.startY, w, h);
+        } else {
+          ctx.strokeStyle = imgEditor.color;
+          ctx.strokeRect(imgEditor.startX, imgEditor.startY, w, h);
+        }
       } else if (imgEditor.tool === 'circle') {
         ctx.putImageData(imgEditor.savedImageData, 0, 0);
         const dx = x - imgEditor.startX;
         const dy = y - imgEditor.startY;
         const r = Math.sqrt(dx * dx + dy * dy);
+
         ctx.beginPath();
         ctx.arc(imgEditor.startX, imgEditor.startY, r, 0, Math.PI * 2);
-        ctx.stroke();
+
+        if (imgEditor.shapeStyle === 'fill') {
+          ctx.fillStyle = imgEditor.color;
+          ctx.fill();
+        } else {
+          ctx.strokeStyle = imgEditor.color;
+          ctx.stroke();
+        }
       }
     };
 
@@ -1772,6 +2132,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // фон
     ctx.fillStyle = '#0b1120';
     ctx.fillRect(0, 0, w, h);
+
+    // очищаем старые текстовые блоки
+    if (imgEditor.textLayer) {
+      imgEditor.textLayer.innerHTML = '';
+    }
 
     // если есть изображение в карточке — подгружаем
     const fieldId = side === 'front' ? 'frontField' : 'backField';
@@ -1882,6 +2247,93 @@ document.addEventListener('DOMContentLoaded', () => {
     backEditBtn.onclick = () => {
       openImageEditor('back');
     };
+
+  // ---------- Вставка изображения из буфера обмена (Ctrl+V) ----------
+  document.addEventListener('paste', async (e) => {
+    const cd = e.clipboardData || window.clipboardData;
+    if (!cd) return;
+
+    const items = cd.items || cd.files || [];
+    let file = null;
+
+    // ищем первый image/*
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      const type = it.type || '';
+      if (type.startsWith('image/')) {
+        file = it.getAsFile ? it.getAsFile() : it;
+        break;
+      }
+    }
+
+    if (!file) return; // ничего не вставляем, если не картинка
+
+    e.preventDefault();
+
+    const dataUrl = await readFileAsDataURL(file);
+
+    // определяем, для какой стороны это изображение
+    let side = null;
+
+    // 1) если открыт редактор и уже выбрана сторона — используем её
+    if (
+      imgEditor.overlay &&
+      imgEditor.overlay.style.display !== 'none' &&
+      imgEditor.side
+    ) {
+      side = imgEditor.side;
+    } else {
+      // 2) иначе смотрим, где сейчас фокус: frontField или backField
+      const active = document.activeElement;
+      const frontField = document.getElementById('frontField');
+      const backField = document.getElementById('backField');
+
+      if (frontField && frontField.contains(active)) {
+        side = 'front';
+      } else if (backField && backField.contains(active)) {
+        side = 'back';
+      }
+    }
+
+    if (!side) {
+      // курсор не в нужной области и редактор не открыт — ничего не делаем
+      return;
+    }
+
+    // ставим картинку в форму (миниатюра + dataset.img)
+    setFieldImage(side, dataUrl);
+
+    // если редактор уже открыт и смотрит на эту сторону — рисуем сразу на холсте
+    if (
+      imgEditor.overlay &&
+      imgEditor.overlay.style.display !== 'none' &&
+      imgEditor.canvas &&
+      imgEditor.ctx &&
+      imgEditor.side === side
+    ) {
+      const img = new Image();
+      const ctx = imgEditor.ctx;
+      const canvas = imgEditor.canvas;
+
+      img.onload = () => {
+        const w = canvas.width;
+        const h = canvas.height;
+        ctx.fillStyle = '#0b1120';
+        ctx.fillRect(0, 0, w, h);
+
+        const ratio = Math.min(w / img.width, h / img.height);
+        const iw = img.width * ratio;
+        const ih = img.height * ratio;
+        const ox = (w - iw) / 2;
+        const oy = (h - ih) / 2;
+        ctx.drawImage(img, ox, oy, iw, ih);
+      };
+      img.src = dataUrl;
+    } else {
+      // иначе просто открываем редактор с этой картинкой
+      openImageEditor(side);
+    }
+  });
 
   // helper для консоли
   window.addScheduleItem = addScheduleItem;
