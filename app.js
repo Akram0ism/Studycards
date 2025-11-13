@@ -18,6 +18,22 @@ let state = {
   uiWeekOffset: 0,
 };
 
+// --- Image Editor state ---
+// Глобальное состояние мини-фотошопа
+const imgEditor = {
+  overlay: null,
+  canvas: null,
+  ctx: null,
+  side: null, // 'front' | 'back'
+  tool: 'brush', // 'brush' | 'rect' | 'circle' | 'text'
+  color: '#ffffff',
+  size: 5,
+  drawing: false,
+  startX: 0,
+  startY: 0,
+  savedImageData: null, // для прямоугольника / круга
+};
+
 // ---- Utils ----
 const uid = (p = 'id') => p + '_' + Math.random().toString(36).slice(2, 9);
 
@@ -310,11 +326,7 @@ function renderLibrary() {
       <div class="desc">${d.description || 'Без описания'}</div>
       <div class="row" style="gap:6px;margin-top:4px">
         <span class="badge">${d.cards?.length || 0} карточек</span>
-        ${
-          d.examDate
-            ? `<span class="badge">${formatExamBadge(d)}</span>`
-            : ``
-        }
+        ${d.examDate ? `<span class="badge">${formatExamBadge(d)}</span>` : ``}
         <span class="badge" style="border-color:${withAlpha(
           deckColor,
           0.5
@@ -392,7 +404,6 @@ function renderLibrary() {
     grid.appendChild(card);
   });
 }
-
 
 // ---- WORKSPACE ----
 function highlight(text, q) {
@@ -1073,10 +1084,9 @@ function exportDeck(deckId) {
     return;
   }
   const safeTitle = (deck.title || 'deck').replace(/[^a-z0-9_\-а-яё]/gi, '_');
-  const blob = new Blob(
-    [JSON.stringify(deck, null, 2)],
-    { type: 'application/json' }
-  );
+  const blob = new Blob([JSON.stringify(deck, null, 2)], {
+    type: 'application/json',
+  });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = `deck_${safeTitle}.json`;
@@ -1148,7 +1158,6 @@ function importIntoDeck(deckId) {
   };
   input.click();
 }
-
 
 // ---- Schedule helpers for Workspace ----
 function getDeckTopicsSafe() {
@@ -1313,10 +1322,6 @@ function applyTopicFilter(topic) {
 function setPage(page) {
   state.page = page;
 
-  document.querySelectorAll('.nav-item').forEach((b) => {
-    b.classList.toggle('active', b.dataset.page === page);
-  });
-
   const homeSection = document.getElementById('homeSection');
   const librarySection = document.getElementById('librarySection');
   const workspaceSection = document.getElementById('workspaceSection');
@@ -1346,17 +1351,21 @@ function setPage(page) {
 }
 
 // ---- DOM Ready ----
+// ---- DOM Ready ----
+
+// ---- DOM Ready ----
+// ---- DOM Ready ----
 document.addEventListener('DOMContentLoaded', () => {
   load();
   ensureSchedule();
   ensureScheduleIds();
 
-  // Сайдбар навигация
+  // ---------- Навигация сайдбара ----------
   document.querySelectorAll('.nav-item').forEach((b) => {
     b.onclick = () => setPage(b.dataset.page);
   });
 
-  // Главная: неделя навигация
+  // ---------- Главная: неделя навигация ----------
   const prevWeekBtn = document.getElementById('prevWeek');
   const nextWeekBtn = document.getElementById('nextWeek');
   if (prevWeekBtn)
@@ -1376,7 +1385,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (scheduleGuideBtn)
     scheduleGuideBtn.onclick = () => {
       showToast(
-        'Открой «Библиотека → колода → Рабочее место», блок «Расписание для колоды», выбери день и тему, нажми «+ Добавить».'
+        'Открой «Библиотека → выбери колоду → Рабочее место», блок «Расписание для колоды», выбери день и тему, нажми «+ Добавить».'
       );
     };
 
@@ -1385,7 +1394,7 @@ document.addEventListener('DOMContentLoaded', () => {
     b.onclick = () => setPage(b.getAttribute('data-goto'));
   });
 
-  // Создание колоды
+  // ---------- Создание колоды ----------
   const createDeckBtn = document.getElementById('createDeckBtn');
   if (createDeckBtn)
     createDeckBtn.onclick = () => {
@@ -1434,7 +1443,7 @@ document.addEventListener('DOMContentLoaded', () => {
       showToast('✨ Колода создана');
     };
 
-  // Workspace: расписание — добавить элемент
+  // ---------- Расписание в workspace ----------
   const addBtn = document.getElementById('scheduleAddBtn');
   if (addBtn)
     addBtn.onclick = () => {
@@ -1475,31 +1484,44 @@ document.addEventListener('DOMContentLoaded', () => {
       if (state.page === 'home') renderHomeCalendar();
     };
 
-  // Поиск в библиотеке
+  // ---------- Поиск в библиотеке ----------
   const libSearch = document.getElementById('libSearch');
   if (libSearch) libSearch.oninput = renderLibrary;
 
-  // Экспорт/Импорт
+  // ---------- Экспорт / Импорт ВСЕХ данных (кнопки в сайдбаре) ----------
   const exportBtn = document.getElementById('exportBtn');
   const importBtn = document.getElementById('importBtn');
-  if (exportBtn) exportBtn.onclick = exportData;
-  if (importBtn)
+
+  if (exportBtn && typeof exportData === 'function') {
+    exportBtn.onclick = exportData;
+  }
+
+  if (importBtn) {
     importBtn.onclick = () => {
       const f = document.createElement('input');
       f.type = 'file';
       f.accept = '.json';
-      f.onchange = (e) => importData(e.target.files[0]);
+      f.onchange = (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        if (typeof importData === 'function') {
+          importData(file);
+        } else {
+          showToast('Импорт пока не реализован в этом билде');
+        }
+      };
       f.click();
     };
+  }
 
-  // Кнопка назад в библиотеку
+  // ---------- Кнопка "Назад в библиотеку" ----------
   const backToLibraryBtn = document.getElementById('backToLibraryBtn');
   if (backToLibraryBtn)
     backToLibraryBtn.onclick = () => {
       setPage('library');
     };
 
-  // Цвет колоды (только в рабочем месте)
+  // ---------- Цвет колоды (только в рабочем месте) ----------
   const deckColorPicker = document.getElementById('deckColorPicker');
   if (deckColorPicker) {
     deckColorPicker.addEventListener('input', (e) => {
@@ -1515,7 +1537,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Workspace: изображения
+  // ---------- Работа с изображениями (загрузка + авто-фотошоп) ----------
   const frontImgBtn = document.getElementById('frontImgBtn');
   const backImgBtn = document.getElementById('backImgBtn');
   const frontImgFile = document.getElementById('frontImgFile');
@@ -1533,7 +1555,12 @@ document.addEventListener('DOMContentLoaded', () => {
         showToast('Нужен файл-изображение');
         return;
       }
-      setFieldImage('front', await readFileAsDataURL(f));
+      const dataUrl = await readFileAsDataURL(f);
+
+      // 1) сразу кладём в форму
+      setFieldImage('front', dataUrl);
+      // 2) сразу открываем фотошоп с этой картинкой
+      openImageEditor('front');
     });
 
   if (backImgFile)
@@ -1544,7 +1571,10 @@ document.addEventListener('DOMContentLoaded', () => {
         showToast('Нужен файл-изображение');
         return;
       }
-      setFieldImage('back', await readFileAsDataURL(f));
+      const dataUrl = await readFileAsDataURL(f);
+
+      setFieldImage('back', dataUrl);
+      openImageEditor('back');
     });
 
   document.querySelectorAll('.thumb .x').forEach((x) => {
@@ -1559,7 +1589,212 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // Workspace: форма карточки
+  // ---------- ИНИЦИАЛИЗАЦИЯ МИНИ-ФОТОШОПА ----------
+  function initImageEditor() {
+    const overlay = document.getElementById('imgEditorOverlay');
+    const canvas = document.getElementById('imgEditorCanvas');
+    if (!overlay || !canvas) return;
+
+    imgEditor.overlay = overlay;
+    imgEditor.canvas = canvas;
+    imgEditor.ctx = canvas.getContext('2d');
+
+    const closeBtn = document.getElementById('imgEditorCloseBtn');
+    const saveBtn = document.getElementById('imgEditorSaveBtn');
+    const clearBtn = document.getElementById('imgEditorClearBtn');
+    const colorInp = document.getElementById('imgEditorColor');
+    const sizeInp = document.getElementById('imgEditorSize');
+
+    if (closeBtn)
+      closeBtn.onclick = () => {
+        overlay.style.display = 'none';
+        imgEditor.side = null;
+      };
+
+    if (saveBtn)
+      saveBtn.onclick = () => {
+        const dataUrl = imgEditor.canvas.toDataURL('image/png');
+        if (imgEditor.side === 'front') {
+          setFieldImage('front', dataUrl);
+        } else if (imgEditor.side === 'back') {
+          setFieldImage('back', dataUrl);
+        }
+        save();
+        overlay.style.display = 'none';
+        imgEditor.side = null;
+        showToast('🖼️ Изображение сохранено в карточку');
+      };
+
+    if (clearBtn)
+      clearBtn.onclick = () => {
+        const { ctx, canvas } = imgEditor;
+        ctx.fillStyle = '#0b1120';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      };
+
+    if (colorInp)
+      colorInp.oninput = (e) => {
+        imgEditor.color = e.target.value || '#ffffff';
+      };
+
+    if (sizeInp)
+      sizeInp.oninput = (e) => {
+        imgEditor.size = parseInt(e.target.value, 10) || 5;
+      };
+
+    // выбор инструмента
+    document.querySelectorAll('.img-tool-btn').forEach((btn) => {
+      btn.onclick = () => {
+        const tool = btn.dataset.tool;
+        imgEditor.tool = tool;
+        document
+          .querySelectorAll('.img-tool-btn')
+          .forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+      };
+    });
+
+    const c = canvas;
+    const getPos = (ev) => {
+      const rect = c.getBoundingClientRect();
+      const sx = c.width / rect.width;
+      const sy = c.height / rect.height;
+
+      if (ev.touches && ev.touches[0]) {
+        return {
+          x: (ev.touches[0].clientX - rect.left) * sx,
+          y: (ev.touches[0].clientY - rect.top) * sy,
+        };
+      }
+      return {
+        x: (ev.clientX - rect.left) * sx,
+        y: (ev.clientY - rect.top) * sy,
+      };
+    };
+
+    const startDraw = (ev) => {
+      ev.preventDefault();
+      const { x, y } = getPos(ev);
+      const ctx = imgEditor.ctx;
+
+      if (imgEditor.tool === 'text') {
+        const text = prompt('Введите текст:');
+        if (text) {
+          ctx.fillStyle = imgEditor.color;
+          ctx.font = `${Math.max(
+            imgEditor.size * 4,
+            12
+          )}px system-ui, sans-serif`;
+          ctx.fillText(text, x, y);
+        }
+        return;
+      }
+
+      imgEditor.drawing = true;
+      imgEditor.startX = x;
+      imgEditor.startY = y;
+
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      if (imgEditor.tool === 'brush') {
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+      } else if (imgEditor.tool === 'rect' || imgEditor.tool === 'circle') {
+        imgEditor.savedImageData = ctx.getImageData(0, 0, c.width, c.height);
+      }
+    };
+
+    const moveDraw = (ev) => {
+      if (!imgEditor.drawing) return;
+      ev.preventDefault();
+      const { x, y } = getPos(ev);
+      const ctx = imgEditor.ctx;
+
+      ctx.strokeStyle = imgEditor.color;
+      ctx.lineWidth = imgEditor.size;
+
+      if (imgEditor.tool === 'brush') {
+        ctx.lineTo(x, y);
+        ctx.stroke();
+      } else if (imgEditor.tool === 'rect') {
+        ctx.putImageData(imgEditor.savedImageData, 0, 0);
+        const w = x - imgEditor.startX;
+        const h = y - imgEditor.startY;
+        ctx.strokeRect(imgEditor.startX, imgEditor.startY, w, h);
+      } else if (imgEditor.tool === 'circle') {
+        ctx.putImageData(imgEditor.savedImageData, 0, 0);
+        const dx = x - imgEditor.startX;
+        const dy = y - imgEditor.startY;
+        const r = Math.sqrt(dx * dx + dy * dy);
+        ctx.beginPath();
+        ctx.arc(imgEditor.startX, imgEditor.startY, r, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    };
+
+    const endDraw = (ev) => {
+      if (!imgEditor.drawing) return;
+      ev.preventDefault();
+      imgEditor.drawing = false;
+    };
+
+    c.addEventListener('mousedown', startDraw);
+    c.addEventListener('mousemove', moveDraw);
+    c.addEventListener('mouseup', endDraw);
+    c.addEventListener('mouseleave', endDraw);
+
+    c.addEventListener('touchstart', startDraw, { passive: false });
+    c.addEventListener('touchmove', moveDraw, { passive: false });
+    c.addEventListener('touchend', endDraw, { passive: false });
+
+    // Закрытие по клику в фон
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        overlay.style.display = 'none';
+        imgEditor.side = null;
+      }
+    });
+  }
+
+  function openImageEditor(side) {
+    const overlay = document.getElementById('imgEditorOverlay');
+    const canvas = document.getElementById('imgEditorCanvas');
+    if (!overlay || !canvas || !imgEditor.ctx) return;
+
+    imgEditor.side = side;
+    overlay.style.display = 'flex';
+
+    const ctx = imgEditor.ctx;
+    const w = canvas.width;
+    const h = canvas.height;
+
+    // фон
+    ctx.fillStyle = '#0b1120';
+    ctx.fillRect(0, 0, w, h);
+
+    // если есть изображение в карточке — подгружаем
+    const fieldId = side === 'front' ? 'frontField' : 'backField';
+    const field = document.getElementById(fieldId);
+    const dataUrl = field?.dataset.img || null;
+
+    if (dataUrl) {
+      const img = new Image();
+      img.onload = () => {
+        const ratio = Math.min(w / img.width, h / img.height);
+        const iw = img.width * ratio;
+        const ih = img.height * ratio;
+        const ox = (w - iw) / 2;
+        const oy = (h - ih) / 2;
+        ctx.fillStyle = '#0b1120';
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, ox, oy, iw, ih);
+      };
+      img.src = dataUrl;
+    }
+  }
+
+  // ---------- Форма карточки ----------
   const cardTypeSelect = document.getElementById('cardTypeSelect');
   if (cardTypeSelect)
     cardTypeSelect.addEventListener('change', refreshOptionsEditorVisibility);
@@ -1573,7 +1808,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (saveCardBtn) saveCardBtn.addEventListener('click', saveCard);
   if (cancelEditBtn) cancelEditBtn.addEventListener('click', cancelEdit);
 
-  // Workspace: поиск/фильтр
+  // ---------- Поиск / фильтр ----------
   const searchEl = document.getElementById('searchInput');
   if (searchEl) searchEl.addEventListener('input', renderCards);
   const topicSel = document.getElementById('topicFilter');
@@ -1584,7 +1819,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (state.mode === 'study') startStudy();
     });
 
-  // Workspace: переключатель режимов
+  // ---------- Переключатель режимов (Редактировать / Учить) ----------
   document.querySelectorAll('.mode-btn').forEach((btn) => {
     btn.onclick = () => {
       state.mode = btn.dataset.mode;
@@ -1601,14 +1836,16 @@ document.addEventListener('DOMContentLoaded', () => {
       save();
     };
   });
-  // Закрывать все меню по клику вне
-  document.addEventListener('click', () => {
+
+  // ---------- Закрытие меню колод по клику вне ----------
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('.deck-menu')) return;
     document
       .querySelectorAll('.deck-menu-popup.open')
       .forEach((m) => m.classList.remove('open'));
   });
 
-  // Горячие клавиши
+  // ---------- Горячие клавиши ----------
   document.addEventListener('keydown', (e) => {
     if (state.page === 'workspace' && state.mode === 'study') {
       const card = state.studyQueue[state.studyIndex];
@@ -1616,7 +1853,6 @@ document.addEventListener('DOMContentLoaded', () => {
       if (e.code === 'Space') {
         e.preventDefault();
         if (card && card.type === 'single' && card.options?.length) {
-          // для тестовых карточек пробел игнорируем
           return;
         }
         if (!state.studyShowAnswer) showAns();
@@ -1627,20 +1863,25 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (e.ctrlKey && e.key === 'Enter') saveCard();
   });
-    // Закрывать все меню по клику вне
-    document.addEventListener('click', (e) => {
-      // Если клик внутри меню (кнопка ⋮ или сам попап) — ничего не делаем
-      if (e.target.closest('.deck-menu')) return;
-    
-      // Клик снаружи — закрываем все открытые меню
-      document
-        .querySelectorAll('.deck-menu-popup.open')
-        .forEach((m) => m.classList.remove('open'));
-    });
-    
 
-  // Первый показ
+  // ---------- Первый показ ----------
   setPage(state.page || 'home');
+
+  // ---------- Инициализация редактора изображений ----------
+  initImageEditor();
+
+  // Кнопки ✏️ для открытия редактора вручную
+  const frontEditBtn = document.getElementById('frontEditBtn');
+  if (frontEditBtn)
+    frontEditBtn.onclick = () => {
+      openImageEditor('front');
+    };
+
+  const backEditBtn = document.getElementById('backEditBtn');
+  if (backEditBtn)
+    backEditBtn.onclick = () => {
+      openImageEditor('back');
+    };
 
   // helper для консоли
   window.addScheduleItem = addScheduleItem;
