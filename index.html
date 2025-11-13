@@ -4,6 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1.0" />
     <title>Учебные карточки</title>
+        <!-- Google API & Identity -->
+        <script async src="https://apis.google.com/js/api.js"></script>
+        <script async src="https://accounts.google.com/gsi/client" ></script>
+    
 
     <link rel="stylesheet" href="./style.css?v=4" />
 
@@ -70,7 +74,15 @@
           + Создать
         </button>
       </div>
-    </aside>
+    
+      <div class="panel">
+      <h3>Облако</h3>
+      <button id="connectDriveBtn" class="btn btn-secondary" style="width:100%;margin-bottom:6px;">
+        Подключить Google Drive
+      </button>
+      <div id="driveStatus" class="muted small">Не подключено</div>
+    </div>
+</aside>
 
     <!-- Основная часть -->
     <main class="main">
@@ -282,6 +294,33 @@
               </div>
             </div>
 
+            <!-- PDF материалы колоды -->
+            <div
+              id="deckDocsBox"
+              class="card-form"
+              style="display: none; margin-top: 8px"
+            >
+              <h3 style="margin-bottom: 6px">PDF материалы</h3>
+              <p class="muted small" style="margin-bottom: 8px">
+                Прикрепи сюда конспекты, сканы, формулы — они будут связаны
+                именно с этой колодой.
+              </p>
+              <button
+                id="addDeckPdfBtn"
+                class="btn btn-secondary"
+                style="margin-bottom: 8px"
+              >
+                + Добавить PDF
+              </button>
+              <input
+                id="deckPdfFileInput"
+                type="file"
+                accept="application/pdf"
+                style="display: none"
+              />
+              <div id="deckPdfList"></div>
+            </div>
+
             <!-- Расписание для колоды -->
             <aside
               id="wsScheduleBox"
@@ -451,8 +490,8 @@
             🔤 Текст
           </button>
           <button class="btn btn-secondary img-tool-btn" data-tool="field">
-          ☐ Поле ответа
-        </button>
+            ☐ Поле ответа
+          </button>
 
           <span class="muted small" style="margin-left: 8px">Цвет:</span>
           <input
@@ -477,7 +516,7 @@
             value="5"
             style="width: 120px"
           />
-          <span class="muted small" style="margin-left:8px;">Фигура:</span>
+          <span class="muted small" style="margin-left: 8px">Фигура:</span>
           <button
             type="button"
             class="btn btn-secondary img-shape-style-btn active"
@@ -492,31 +531,35 @@
           >
             Заливка
           </button>
-      
         </div>
 
-         <!-- холст + слой текстовых блоков -->
-  <div
-  class="img-editor-canvas-wrap"
-  style="
-    background:#020617;
-    border-radius:8px;
-    border:1px solid rgba(30,64,175,.5);
-    padding:8px;
-    overflow:auto;
-  "
->
-  <canvas
-    id="imgEditorCanvas"
-    width="800"
-    height="450"
-    style="max-width:100%;background:#0b1120;display:block;margin:0 auto;border-radius:6px;"
-  ></canvas>
+        <!-- холст + слой текстовых блоков -->
+        <div
+          class="img-editor-canvas-wrap"
+          style="
+            background: #020617;
+            border-radius: 8px;
+            border: 1px solid rgba(30, 64, 175, 0.5);
+            padding: 8px;
+            overflow: auto;
+          "
+        >
+          <canvas
+            id="imgEditorCanvas"
+            width="800"
+            height="450"
+            style="
+              max-width: 100%;
+              background: #0b1120;
+              display: block;
+              margin: 0 auto;
+              border-radius: 6px;
+            "
+          ></canvas>
 
-  <!-- сюда будут добавляться "текстовые рамки" -->
-  <div id="imgEditorTextLayer"></div>
-</div>
-
+          <!-- сюда будут добавляться "текстовые рамки" -->
+          <div id="imgEditorTextLayer"></div>
+        </div>
 
         <!-- действия -->
         <div
@@ -538,6 +581,65 @@
             💾 Сохранить в карточку
           </button>
         </div>
+      </div>
+    </div>
+
+    <!-- Оверлей просмотра PDF материалов -->
+    <div
+      id="pdfViewerOverlay"
+      style="
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 15, 25, 0.85);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 10000;
+      "
+    >
+      <div
+        style="
+          background: #111827;
+          border-radius: 12px;
+          padding: 8px;
+          max-width: 1000px;
+          width: 95%;
+          height: 90%;
+          box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        "
+      >
+        <div
+          style="
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+          "
+        >
+          <div style="color: #e5e7eb; font-size: 14px">
+            PDF материала колоды
+          </div>
+          <button
+            id="pdfViewerCloseBtn"
+            class="btn btn-secondary"
+            style="padding: 4px 10px"
+          >
+            ✕ Закрыть
+          </button>
+        </div>
+        <iframe
+          id="pdfViewerFrame"
+          style="
+            flex: 1;
+            width: 100%;
+            border-radius: 8px;
+            border: 1px solid rgba(148, 163, 184, 0.4);
+            background: #020617;
+          "
+        ></iframe>
       </div>
     </div>
   </body>
