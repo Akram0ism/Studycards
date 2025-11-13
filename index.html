@@ -10,17 +10,26 @@
     <!-- marked.js для Markdown -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
-    <!-- MathJax для формул -->
     <script>
+      // Настройка MathJax: $...$ и \( ... \) — inline-формулы
       window.MathJax = {
-        tex: { inlineMath: [['$', '$'], ['\\(', '\\)']] },
+        tex: {
+          inlineMath: [
+            ['$', '$'],
+            ['\\(', '\\)'],
+          ],
+          displayMath: [
+            ['$$', '$$'],
+            ['\\[', '\\]'],
+          ],
+        },
         svg: { fontCache: 'global' },
       };
     </script>
     <script
       id="MathJax-script"
       async
-      src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"
+      src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"
     ></script>
   </head>
   <body>
@@ -61,20 +70,6 @@
           + Создать
         </button>
       </div>
-
-      <!-- Экспорт/Импорт -->
-      <div class="panel">
-        <button id="exportBtn" class="btn btn-secondary" style="width: 100%">
-          ⬇️ Экспорт JSON
-        </button>
-        <button
-          id="importBtn"
-          class="btn btn-secondary"
-          style="width: 100%; margin-top: 6px"
-        >
-          ⬆️ Импорт JSON
-        </button>
-      </div>
     </aside>
 
     <!-- Основная часть -->
@@ -88,13 +83,20 @@
 
         <div class="page-actions">
           <!-- Цвет колоды (только в рабочем месте) -->
-          <div id="deckColorBox" class="row" style="gap:8px; display:none">
+          <div id="deckColorBox" class="row" style="gap: 8px; display: none">
             <span class="muted small">Цвет колоды</span>
             <input
               id="deckColorPicker"
               type="color"
               value="#a855f7"
-              style="width:34px;height:28px;padding:0;border:none;background:transparent;cursor:pointer"
+              style="
+                width: 34px;
+                height: 28px;
+                padding: 0;
+                border: none;
+                background: transparent;
+                cursor: pointer;
+              "
             />
           </div>
 
@@ -102,13 +104,13 @@
           <button
             id="backToLibraryBtn"
             class="btn btn-secondary"
-            style="display:none"
+            style="display: none"
           >
             ← В библиотеку
           </button>
 
           <!-- Переключатель режимов рабочего места -->
-          <div id="workspaceSwitch" class="mode-switch" style="display:none">
+          <div id="workspaceSwitch" class="mode-switch" style="display: none">
             <button class="mode-btn active" data-mode="manage">
               Редактировать
             </button>
@@ -159,7 +161,7 @@
       </section>
 
       <!-- Рабочее место -->
-      <section id="workspaceSection" style="display:none">
+      <section id="workspaceSection" style="display: none">
         <!-- Верхняя сетка: редактор + справа панели -->
         <div class="ws-top-grid">
           <!-- Левая колонка: редактор карточки -->
@@ -173,10 +175,12 @@
                 rows="2"
                 placeholder="Вопрос..."
               ></textarea>
-              <div class="thumb" id="frontThumb" style="display:none">
+              <div class="thumb" id="frontThumb" style="display: none">
                 <img alt="front" /><span class="x" data-target="front">×</span>
               </div>
-              <button type="button" class="icon-btn" id="frontImgBtn">📷</button>
+              <button type="button" class="icon-btn" id="frontImgBtn">
+                📷
+              </button>
               <input
                 id="frontImgFile"
                 type="file"
@@ -185,14 +189,19 @@
               />
             </div>
 
-            <div class="field" id="backField" data-img="" style="margin-top: 8px">
+            <div
+              class="field"
+              id="backField"
+              data-img=""
+              style="margin-top: 8px"
+            >
               <textarea
                 id="cardBackInput"
                 class="textarea"
                 rows="2"
                 placeholder="Ответ..."
               ></textarea>
-              <div class="thumb" id="backThumb" style="display:none">
+              <div class="thumb" id="backThumb" style="display: none">
                 <img alt="back" /><span class="x" data-target="back">×</span>
               </div>
               <button type="button" class="icon-btn" id="backImgBtn">📷</button>
@@ -265,15 +274,12 @@
             <aside
               id="wsScheduleBox"
               class="card-form schedule-card"
-              style="display:none"
+              style="display: none"
             >
-              <h3 style="margin-bottom:8px">Расписание для колоды</h3>
+              <h3 style="margin-bottom: 8px">Расписание для колоды</h3>
 
-              <div
-                class="row row-wrap"
-                style="gap:8px; align-items:center;"
-              >
-                <label class="muted" style="min-width:80px">День</label>
+              <div class="row row-wrap" style="gap: 8px; align-items: center">
+                <label class="muted" style="min-width: 80px">День</label>
                 <select
                   id="scheduleWeekday"
                   class="input"
@@ -288,19 +294,19 @@
                   <option value="6">Вс</option>
                 </select>
 
-                <label class="muted" style="min-width:80px">Тема</label>
+                <label class="muted" style="min-width: 80px">Тема</label>
                 <input
                   id="scheduleTopic"
                   list="topicsDatalist"
                   class="input"
                   placeholder="(необязательно)"
-                  style="max-width:260px"
+                  style="max-width: 260px"
                 />
 
                 <button id="scheduleAddBtn" class="btn">+ Добавить</button>
               </div>
 
-              <div id="scheduleList" style="margin-top:10px"></div>
+              <div id="scheduleList" style="margin-top: 10px"></div>
             </aside>
           </aside>
         </div>
@@ -339,9 +345,7 @@
           <div class="study-card">
             <div class="study-card-inner">
               <div class="study-label">Вопрос</div>
-              <div class="study-text">
-                Выбери колоду и нажми «Учить».
-              </div>
+              <div class="study-text">Выбери колоду и нажми «Учить».</div>
               <div id="optionsContainer" class="option-list"></div>
             </div>
             <div class="study-actions"></div>
