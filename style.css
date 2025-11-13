@@ -682,3 +682,50 @@ select.input::-webkit-scrollbar-thumb {
     background-color: rgba(255, 255, 255, 0.05);
   }
 }
+.deck-menu {
+  position: relative;
+}
+
+.deck-menu-toggle {
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.deck-menu-popup {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  min-width: 160px;
+  background: #18181b;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 4px;
+  display: none;
+  z-index: 20;
+}
+
+.deck-menu-popup.open {
+  display: block;
+}
+
+.deck-menu-popup button {
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  font-size: 13px;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.deck-menu-popup button:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
