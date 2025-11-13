@@ -1228,6 +1228,9 @@ document.addEventListener('DOMContentLoaded', () => {
     f.onchange = (e) => importData(e.target.files[0]);
     f.click();
   };
+
+  setPage(state.page || 'home');
+  window.addScheduleItem = addScheduleItem;
 });
 
 const deckColorPicker = document.getElementById('deckColorPicker');
@@ -1340,10 +1343,3 @@ document.addEventListener('keydown', (e) => {
   }
   if (e.ctrlKey && e.key === 'Enter') saveCard();
 });
-
-
-// Первый показ
-setPage(state.page || 'home');
-
-// Экспорт helper в окно (чтобы легко заполнять расписание вручную)
-window.addScheduleItem = addScheduleItem;
