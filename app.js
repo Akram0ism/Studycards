@@ -17,6 +17,20 @@ let state = {
   // Текущая неделя для показа на главной (offset от "сегодня")
   uiWeekOffset: 0,
 };
+// ---- Google Drive config ----
+// ⚠️ ОБЯЗАТЕЛЬНО замени на свои значения из Google Cloud Console
+const GOOGLE_CLIENT_ID = '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';
+const GOOGLE_API_KEY = 'AIzaSyDfuiDvOUJGSsJ9OnhGklnPPNH29ldSTuo';
+
+// Scope: только файлы, которыми управляет это приложение
+const GOOGLE_SCOPES = 'https://www.googleapis.com/auth/drive.file';
+
+const driveState = {
+  tokenClient: null,
+  gapiInited: false,
+  gisInited: false,
+  accessToken: null,
+};
 
 // --- Image Editor state ---
 // Глобальное состояние мини-фотошопа
@@ -77,6 +91,13 @@ function ensureScheduleIds() {
       if (!it.id) it.id = uid('sch');
     });
   });
+}
+function openPdfViewer(dataUrl) {
+  const ov = document.getElementById('pdfViewerOverlay');
+  const frame = document.getElementById('pdfViewerFrame');
+  if (!ov || !frame || !dataUrl) return;
+  frame.src = dataUrl;
+  ov.style.display = 'flex';
 }
 
 function showToast(msg) {
@@ -539,7 +560,8 @@ function updateWorkspaceVisibility() {
   const table = document.getElementById('cardTable');
   const study = document.getElementById('studySection');
   const sched = document.getElementById('wsScheduleBox');
-  const topics = document.getElementById('topicPanel'); // может не быть
+  const topics = document.getElementById('topicPanel');
+  const docsBox = document.getElementById('deckDocsBox'); // <---
 
   if (!editor || !table || !study) return;
 
@@ -549,6 +571,7 @@ function updateWorkspaceVisibility() {
     study.style.display = 'none';
     if (sched) sched.style.display = 'none';
     if (topics) topics.style.display = 'none';
+    if (docsBox) docsBox.style.display = 'none';
     return;
   }
 
@@ -558,12 +581,14 @@ function updateWorkspaceVisibility() {
     study.style.display = 'block';
     if (sched) sched.style.display = 'none';
     if (topics) topics.style.display = 'none';
+    if (docsBox) docsBox.style.display = 'none';
   } else {
     editor.style.display = 'block';
     table.style.display = 'block';
     study.style.display = 'none';
     if (sched) sched.style.display = 'block';
     if (topics) topics.style.display = '';
+    if (docsBox) docsBox.style.display = 'block';
   }
 }
 
@@ -615,6 +640,182 @@ function renderHeader() {
     .forEach((btn) =>
       btn.classList.toggle('active', btn.dataset.mode === state.mode)
     );
+}
+// ---- Google Drive helpers ----
+
+function updateDriveStatus(text, ok = false) {
+  const el = document.getElementById('driveStatus');
+  if (!el) return;
+  el.textContent = text;
+  el.style.color = ok ? '#4ade80' : 'var(--text-muted)';
+}
+
+function initGapiClient() {
+  return new Promise((resolve, reject) => {
+    if (!window.gapi) {
+      console.warn('gapi не найден');
+      return reject(new Error('gapi not loaded'));
+    }
+    gapi.load('client', async () => {
+      try {
+        await gapi.client.init({
+          apiKey: GOOGLE_API_KEY,
+          discoveryDocs: [
+            'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest',
+          ],
+        });
+        driveState.gapiInited = true;
+        resolve();
+      } catch (e) {
+        console.error('GAPI init error', e);
+        reject(e);
+      }
+    });
+  });
+}
+
+function initGisClient() {
+  if (!window.google || !google.accounts || !google.accounts.oauth2) {
+    console.warn('Google Identity не найден');
+    return;
+  }
+  driveState.tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID,
+    scope: GOOGLE_SCOPES,
+    callback: (tokenResponse) => {
+      driveState.accessToken = tokenResponse.access_token;
+      gapi.client.setToken({ access_token: driveState.accessToken });
+      updateDriveStatus('Подключено к Google Drive', true);
+      showToast('✅ Google Drive подключён');
+    },
+  });
+  driveState.gisInited = true;
+}
+
+// Проверка и при необходимости запрос доступа
+async function ensureDriveReady(interactive = true) {
+  if (!driveState.gapiInited) {
+    await initGapiClient();
+  }
+  if (!driveState.gisInited) {
+    initGisClient();
+  }
+
+  // если токена нет, запрашиваем его (кнопкой или по запросу)
+  if (!driveState.accessToken) {
+    if (!interactive) {
+      throw new Error('Drive не авторизован');
+    }
+    return new Promise((resolve, reject) => {
+      if (!driveState.tokenClient) {
+        return reject(new Error('tokenClient not inited'));
+      }
+      driveState.tokenClient.callback = (tokenResponse) => {
+        if (tokenResponse.error) {
+          console.error(tokenResponse);
+          updateDriveStatus('Ошибка подключения', false);
+          reject(tokenResponse);
+        } else {
+          driveState.accessToken = tokenResponse.access_token;
+          gapi.client.setToken({ access_token: driveState.accessToken });
+          updateDriveStatus('Подключено к Google Drive', true);
+          showToast('✅ Google Drive подключён');
+          resolve();
+        }
+      };
+      driveState.tokenClient.requestAccessToken({ prompt: 'consent' });
+    });
+  }
+}
+
+// Загрузка файла в Google Drive
+async function uploadFileToDrive(file) {
+  await ensureDriveReady(true);
+
+  const metadata = {
+    name: file.name,
+    mimeType: file.type,
+  };
+
+  const boundary = '-------314159265358979323846';
+  const delimiter = '\r\n--' + boundary + '\r\n';
+  const closeDelim = '\r\n--' + boundary + '--';
+
+  const reader = new FileReader();
+
+  return new Promise((resolve, reject) => {
+    reader.onload = async (e) => {
+      const content = btoa(
+        new Uint8Array(e.target.result).reduce(
+          (data, byte) => data + String.fromCharCode(byte),
+          ''
+        )
+      );
+
+      const multipartRequestBody =
+        delimiter +
+        'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+        JSON.stringify(metadata) +
+        delimiter +
+        'Content-Type: ' +
+        file.type +
+        '\r\n' +
+        'Content-Transfer-Encoding: base64\r\n' +
+        '\r\n' +
+        content +
+        closeDelim;
+
+      try {
+        const res = await gapi.client.request({
+          path: '/upload/drive/v3/files',
+          method: 'POST',
+          params: { uploadType: 'multipart' },
+          headers: {
+            'Content-Type': 'multipart/related; boundary=' + boundary,
+          },
+          body: multipartRequestBody,
+        });
+
+        const fileId = res.result.id;
+
+        // делаем файл доступным для просмотра по ссылке (только просмотр)
+        await gapi.client.drive.permissions.create({
+          fileId,
+          resource: {
+            role: 'reader',
+            type: 'anyone',
+          },
+        });
+
+        const webViewLink = `https://drive.google.com/file/d/${fileId}/preview`;
+        const webContentLink = `https://drive.google.com/uc?export=download&id=${fileId}`;
+
+        resolve({
+          id: fileId,
+          name: file.name,
+          mimeType: file.type,
+          webViewLink,
+          webContentLink,
+        });
+      } catch (err) {
+        console.error('Upload to Drive error', err);
+        showToast('Ошибка загрузки в Google Drive');
+        reject(err);
+      }
+    };
+
+    reader.onerror = reject;
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+function openPdfViewerFromDrive(doc) {
+  if (!doc || !doc.webViewLink) return;
+  const ov = document.getElementById('pdfViewerOverlay');
+  const frame = document.getElementById('pdfViewerFrame');
+  if (!ov || !frame) return;
+  frame.src = doc.webViewLink;
+  ov.style.display = 'flex';
 }
 
 function getDeckTopics(deck) {
@@ -1267,6 +1468,82 @@ function getDeckTopicsSafe() {
   return deck ? getDeckTopics(deck) : [];
 }
 
+function ensureDeckPdfs(deck) {
+  if (!deck) return;
+  if (!Array.isArray(deck.pdfs)) deck.pdfs = [];
+}
+
+function renderDeckPdfs() {
+  const box = document.getElementById('deckDocsBox');
+  const list = document.getElementById('deckPdfList');
+  if (!box || !list) return;
+
+  const deck = currentDeck();
+
+  if (!deck || state.page !== 'workspace' || state.mode === 'study') {
+    box.style.display = 'none';
+    return;
+  }
+
+  ensureDeckPdfs(deck);
+  box.style.display = 'block';
+  list.innerHTML = '';
+
+  if (!deck.pdfs.length) {
+    list.innerHTML =
+      '<div class="muted small">Пока нет PDF-файлов. Нажми «Добавить PDF».</div>';
+    return;
+  }
+
+  deck.pdfs.forEach((doc) => {
+    const row = document.createElement('div');
+    row.className = 'ws-sched-item';
+    row.style.marginBottom = '6px';
+
+    row.innerHTML = `
+      <div class="left">
+        <span class="ws-day">📄 ${doc.name || 'PDF-файл'}</span>
+        ${doc.mimeType ? `<span class="ws-topic">· ${doc.mimeType}</span>` : ''}
+      </div>
+      <div class="row" style="gap:6px;">
+        <button class="btn btn-secondary" style="padding:4px 10px" data-open="${
+          doc.id
+        }">Открыть</button>
+        <button class="btn btn-secondary" style="padding:4px 10px;color:#f87171;border-color:#f87171" data-del="${
+          doc.id
+        }">✕</button>
+      </div>
+    `;
+
+    const openBtn = row.querySelector('[data-open]');
+    const delBtn = row.querySelector('[data-del]');
+
+    if (openBtn) {
+      openBtn.onclick = () => {
+        openPdfViewerFromDrive(doc);
+      };
+    }
+
+    if (delBtn) {
+      delBtn.onclick = async () => {
+        if (!confirm(`Удалить PDF «${doc.name}» из этой колоды?`)) return;
+
+        // по желанию можно удалить и из Drive (оставлю комментом):
+        // try {
+        //   await ensureDriveReady(false);
+        //   await gapi.client.drive.files.delete({ fileId: doc.id });
+        // } catch {}
+
+        deck.pdfs = deck.pdfs.filter((x) => x.id !== doc.id);
+        save();
+        renderDeckPdfs();
+      };
+    }
+
+    list.appendChild(row);
+  });
+}
+
 function renderWorkspaceScheduleBox() {
   const box = document.getElementById('wsScheduleBox');
   const deck = currentDeck();
@@ -1443,6 +1720,7 @@ function setPage(page) {
   if (page === 'workspace') {
     renderCards();
     renderWorkspaceScheduleBox();
+    renderDeckPdfs();
     renderTopicPanel();
     if (state.mode === 'study') renderStudy();
   }
@@ -1530,6 +1808,7 @@ document.addEventListener('DOMContentLoaded', () => {
         cards: [],
         examDate: examDate || null,
         color,
+        pdfs: [], // список PDF-материалов
       };
 
       state.decks.push(newDeck);
@@ -2334,6 +2613,100 @@ document.addEventListener('DOMContentLoaded', () => {
       openImageEditor(side);
     }
   });
+
+  // ---------- Оверлей PDF и загрузка PDF для колоды ----------
+  const pdfOverlay = document.getElementById('pdfViewerOverlay');
+  const pdfFrame = document.getElementById('pdfViewerFrame');
+  const pdfCloseBtn = document.getElementById('pdfViewerCloseBtn');
+
+  if (pdfOverlay && pdfFrame && pdfCloseBtn) {
+    pdfCloseBtn.onclick = () => {
+      pdfOverlay.style.display = 'none';
+      pdfFrame.src = 'about:blank';
+    };
+
+    pdfOverlay.addEventListener('click', (e) => {
+      if (e.target === pdfOverlay) {
+        pdfOverlay.style.display = 'none';
+        pdfFrame.src = 'about:blank';
+      }
+    });
+  }
+
+  const addDeckPdfBtn = document.getElementById('addDeckPdfBtn');
+  const deckPdfFileInput = document.getElementById('deckPdfFileInput');
+
+  if (addDeckPdfBtn && deckPdfFileInput) {
+    addDeckPdfBtn.onclick = async () => {
+      const deck = currentDeck();
+      if (!deck) {
+        showToast('Сначала выбери колоду в библиотеке');
+        return;
+      }
+      try {
+        await ensureDriveReady(true);
+      } catch (e) {
+        console.error(e);
+        showToast('Нужно сначала подключить Google Drive');
+        return;
+      }
+      deckPdfFileInput.value = '';
+      deckPdfFileInput.click();
+    };
+
+    deckPdfFileInput.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      if (
+        file.type !== 'application/pdf' &&
+        !file.name.toLowerCase().endsWith('.pdf')
+      ) {
+        showToast('Нужен PDF-файл');
+        return;
+      }
+
+      const deck = currentDeck();
+      if (!deck) {
+        showToast('Колода не выбрана');
+        return;
+      }
+
+      ensureDeckPdfs(deck);
+
+      try {
+        showToast('Загружаю в Google Drive...');
+        const info = await uploadFileToDrive(file);
+
+        deck.pdfs.push({
+          id: info.id,
+          name: info.name,
+          mimeType: info.mimeType,
+          webViewLink: info.webViewLink,
+          webContentLink: info.webContentLink,
+        });
+
+        save();
+        renderDeckPdfs();
+        showToast('📄 PDF сохранён в Google Drive');
+      } catch (err) {
+        console.error(err);
+      }
+    });
+  }
+
+  // ---------- Кнопка "Подключить Google Drive" ----------
+  const connectDriveBtn = document.getElementById('connectDriveBtn');
+  if (connectDriveBtn) {
+    connectDriveBtn.onclick = async () => {
+      try {
+        await ensureDriveReady(true);
+      } catch (e) {
+        console.error(e);
+        showToast('Не удалось подключить Google Drive');
+      }
+    };
+  }
 
   // helper для консоли
   window.addScheduleItem = addScheduleItem;
