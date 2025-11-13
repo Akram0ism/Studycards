@@ -19,7 +19,7 @@ let state = {
 };
 // ---- Google Drive config ----
 // ⚠️ ОБЯЗАТЕЛЬНО замени на свои значения из Google Cloud Console
-const GOOGLE_CLIENT_ID = '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';
+const GOOGLE_CLIENT_ID = '670946637910-kt7q537t36pa91ahvfmc77pceb3kh6db.apps.googleusercontent.com';
 const GOOGLE_API_KEY = 'AIzaSyDfuiDvOUJGSsJ9OnhGklnPPNH29ldSTuo';
 
 // Scope: только файлы, которыми управляет это приложение
